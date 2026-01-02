@@ -1,0 +1,132 @@
+.App {
+  min-height: 100vh;
+  background-color: #1a1a2e;
+  color: #eee;
+}
+
+.drive-search {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+.drive-search h1 {
+  margin-bottom: 30px;
+  color: #fff;
+}
+
+.drive-search h2 {
+  color: #ff6b6b;
+}
+
+.drive-search pre {
+  background: #0f0f23;
+  padding: 10px;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+
+.drive-search code {
+  color: #61dafb;
+}
+
+.sign-in-btn {
+  background: #4285f4;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  font-size: 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sign-in-btn:hover {
+  background: #357abd;
+}
+
+.search-box {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.search-box input {
+  flex: 1;
+  padding: 12px;
+  font-size: 16px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: #0f0f23;
+  color: #fff;
+}
+
+.search-box input:focus {
+  outline: none;
+  border-color: #4285f4;
+}
+
+.search-box button {
+  padding: 12px 20px;
+  font-size: 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #4285f4;
+  color: white;
+}
+
+.search-box button:hover {
+  background: #357abd;
+}
+
+.search-box button:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
+.sign-out-btn {
+  background: #666 !important;
+}
+
+.sign-out-btn:hover {
+  background: #555 !important;
+}
+
+.results {
+  margin-top: 20px;
+}
+
+.result-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: #16213e;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.result-item:hover {
+  background: #1f3460;
+}
+
+.file-icon {
+  font-size: 20px;
+}
+
+.file-name {
+  flex: 1;
+  text-align: left;
+  word-break: break-word;
+}
+
+.status {
+  margin-top: 20px;
+  padding: 10px;
+  background: #0f0f23;
+  border-radius: 4px;
+  color: #61dafb;
+  font-size: 14px;
+}
