@@ -104,3 +104,4 @@ Authorization: Bearer {access_token}
 ```
 
 This returns the user's Google profile without requiring you to manage any user database.
+

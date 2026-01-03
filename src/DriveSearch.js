@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-const SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
+const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly';
 
 function DriveSearch() {
   const [accessToken, setAccessToken] = useState(null);
@@ -10,6 +10,10 @@ function DriveSearch() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [tokenClient, setTokenClient] = useState(null);
+  const [emails, setEmails] = useState([]);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
 
   useEffect(() => {
     const initClient = () => {
@@ -128,6 +132,129 @@ function DriveSearch() {
     }
   };
 
+  const fetchTodaysEmails = useCallback(async () => {
+    if (!accessToken) return;
+
+    setEmailLoading(true);
+    setStatus('Fetching emails...');
+
+    try {
+      // Get today's date in Gmail query format
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      const query = `after:${year}/${month}/${day}`;
+
+      // Fetch message list
+      const listResponse = await fetch(
+        `https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!listResponse.ok) throw new Error('Failed to fetch emails');
+
+      const listData = await listResponse.json();
+      const messages = listData.messages || [];
+
+      // Fetch details for each message
+      const emailDetails = await Promise.all(
+        messages.map(async (msg) => {
+          const msgResponse = await fetch(
+            `https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
+            {
+              headers: { Authorization: `Bearer ${accessToken}` },
+            }
+          );
+          if (!msgResponse.ok) return null;
+          const msgData = await msgResponse.json();
+
+          const headers = msgData.payload?.headers || [];
+          const getHeader = (name) =>
+            headers.find((h) => h.name === name)?.value || 'Unknown';
+
+          const from = getHeader('From');
+          const domainMatch = from.match(/@([^>]+)/);
+          const domain = domainMatch ? domainMatch[1] : 'Unknown';
+
+          return {
+            id: msg.id,
+            subject: getHeader('Subject') || 'No Subject',
+            from,
+            domain,
+            date: getHeader('Date'),
+          };
+        })
+      );
+
+      const validEmails = emailDetails.filter((e) => e !== null);
+      setEmails(validEmails);
+      setStatus(`Found ${validEmails.length} emails from today (${year}/${month}/${day})`);
+    } catch (error) {
+      setStatus('Error: ' + error.message);
+    } finally {
+      setEmailLoading(false);
+    }
+  }, [accessToken]);
+
+  const fetchCalendarEvents = useCallback(async () => {
+    if (!accessToken) return;
+
+    setEventsLoading(true);
+    setStatus('Fetching calendar events...');
+
+    try {
+      const now = new Date().toISOString();
+
+      const response = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(now)}&maxResults=10&singleEvents=true&orderBy=startTime`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!response.ok) throw new Error('Failed to fetch calendar events');
+
+      const data = await response.json();
+      const items = data.items || [];
+
+      const formattedEvents = items.map((event) => {
+        const start = event.start?.dateTime || event.start?.date;
+        const end = event.end?.dateTime || event.end?.date;
+        const isAllDay = !event.start?.dateTime;
+
+        let timeDisplay;
+        if (isAllDay) {
+          const startDate = new Date(start + 'T00:00:00');
+          timeDisplay = `All day ${startDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}`;
+        } else {
+          const startDate = new Date(start);
+          const endDate = new Date(end);
+          const startStr = startDate.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+          const endStr = endDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+          timeDisplay = `${startStr} - ${endStr}`;
+        }
+
+        return {
+          id: event.id,
+          summary: event.summary || 'No title',
+          time: timeDisplay,
+          location: event.location || null,
+          description: event.description ? (event.description.length > 50 ? event.description.substring(0, 47) + '...' : event.description) : null,
+        };
+      });
+
+      setEvents(formattedEvents);
+      setStatus(`Found ${formattedEvents.length} upcoming events`);
+    } catch (error) {
+      setStatus('Error: ' + error.message);
+    } finally {
+      setEventsLoading(false);
+    }
+  }, [accessToken]);
+
   if (!CLIENT_ID) {
     return (
       <div className="drive-search">
@@ -180,10 +307,56 @@ function DriveSearch() {
               </div>
             ))}
           </div>
+
+          {status && <div className="status">{status}</div>}
+
+          <div className="email-section">
+            <button onClick={fetchTodaysEmails} disabled={emailLoading}>
+              {emailLoading ? 'Loading...' : "Fetch Today's Emails"}
+            </button>
+            <button onClick={() => setEmails([])} className="clear-btn">
+              Clear
+            </button>
+
+            <div className="email-list">
+              {emails.map((email, index) => (
+                <div key={email.id} className="email-item">
+                  <div className="email-index">{index + 1}.</div>
+                  <div className="email-content">
+                    <div className="email-subject">{email.subject}</div>
+                    <div className="email-from">From: {email.from}</div>
+                    <div className="email-domain">Domain: {email.domain}</div>
+                    <div className="email-date">Date: {email.date}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="calendar-section">
+            <button onClick={fetchCalendarEvents} disabled={eventsLoading}>
+              {eventsLoading ? 'Loading...' : 'Fetch Calendar Events'}
+            </button>
+            <button onClick={() => setEvents([])} className="clear-btn">
+              Clear
+            </button>
+
+            <div className="event-list">
+              {events.map((event, index) => (
+                <div key={event.id} className="event-item">
+                  <div className="event-index">{index + 1}.</div>
+                  <div className="event-content">
+                    <div className="event-summary">{event.summary}</div>
+                    <div className="event-time">{event.time}</div>
+                    {event.location && <div className="event-location">{event.location}</div>}
+                    {event.description && <div className="event-description">{event.description}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </>
       )}
-
-      {status && <div className="status">{status}</div>}
     </div>
   );
 }
