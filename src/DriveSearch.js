@@ -12,8 +12,12 @@ function DriveSearch() {
   const [tokenClient, setTokenClient] = useState(null);
   const [emails, setEmails] = useState([]);
   const [emailLoading, setEmailLoading] = useState(false);
+  const [emailDateRange, setEmailDateRange] = useState('today');
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [outputMode, setOutputMode] = useState('clipboard');
+  const [fileContent, setFileContent] = useState('');
+  const [currentFileName, setCurrentFileName] = useState('');
 
   useEffect(() => {
     const initClient = () => {
@@ -90,7 +94,7 @@ function DriveSearch() {
     }
   }, [searchQuery, accessToken]);
 
-  const copyToClipboard = async (fileId, fileName, mimeType) => {
+  const handleFileClick = async (fileId, fileName, mimeType) => {
     setStatus(`Fetching ${fileName}...`);
 
     try {
@@ -119,8 +123,15 @@ function DriveSearch() {
         content = await response.text();
       }
 
-      await navigator.clipboard.writeText(content);
-      setStatus(`Copied "${fileName}" to clipboard`);
+      // Check output mode
+      if (outputMode === 'clipboard') {
+        await navigator.clipboard.writeText(content);
+        setStatus(`Copied "${fileName}" to clipboard`);
+      } else {
+        setFileContent(content);
+        setCurrentFileName(fileName);
+        setStatus(`Loaded "${fileName}"`);
+      }
     } catch (error) {
       setStatus('Error: ' + error.message);
     }
@@ -132,19 +143,54 @@ function DriveSearch() {
     }
   };
 
-  const fetchTodaysEmails = useCallback(async () => {
+  const fetchEmails = useCallback(async () => {
     if (!accessToken) return;
 
     setEmailLoading(true);
     setStatus('Fetching emails...');
 
     try {
-      // Get today's date in Gmail query format
+      // Calculate date range based on selection
       const today = new Date();
-      const year = today.getFullYear();
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      const day = String(today.getDate()).padStart(2, '0');
-      const query = `after:${year}/${month}/${day}`;
+      let daysBack = 0;
+      let rangeLabel = 'today';
+
+      switch (emailDateRange) {
+        case 'yesterday':
+          daysBack = 1;
+          rangeLabel = 'yesterday';
+          break;
+        case 'dayBefore':
+          daysBack = 2;
+          rangeLabel = '2 days ago';
+          break;
+        case 'threeDays':
+          daysBack = 3;
+          rangeLabel = '3 days ago';
+          break;
+        default:
+          daysBack = 0;
+          rangeLabel = 'today';
+      }
+
+      const startDate = new Date(today);
+      startDate.setDate(today.getDate() - daysBack);
+
+      const endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 1);
+
+      const formatDate = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}/${month}/${day}`;
+      };
+
+      const startStr = formatDate(startDate);
+      const endStr = formatDate(endDate);
+      const query = daysBack === 0
+        ? `after:${startStr}`
+        : `after:${startStr} before:${endStr}`;
 
       // Fetch message list
       const listResponse = await fetch(
@@ -191,13 +237,13 @@ function DriveSearch() {
 
       const validEmails = emailDetails.filter((e) => e !== null);
       setEmails(validEmails);
-      setStatus(`Found ${validEmails.length} emails from today (${year}/${month}/${day})`);
+      setStatus(`Found ${validEmails.length} emails from ${rangeLabel} (${startStr})`);
     } catch (error) {
       setStatus('Error: ' + error.message);
     } finally {
       setEmailLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, emailDateRange]);
 
   const fetchCalendarEvents = useCallback(async () => {
     if (!accessToken) return;
@@ -276,21 +322,36 @@ function DriveSearch() {
         </button>
       ) : (
         <>
-          <div className="search-box">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Search file name..."
-              autoFocus
-            />
-            <button onClick={searchFiles} disabled={loading}>
-              {loading ? '...' : 'Search'}
-            </button>
-            <button onClick={handleSignOut} className="sign-out-btn">
-              Sign Out
-            </button>
+          <div className="search-area">
+            <div className="search-box">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Search file name..."
+                autoFocus
+              />
+              <button onClick={searchFiles} disabled={loading}>
+                {loading ? '...' : 'Search'}
+              </button>
+              <button onClick={handleSignOut} className="sign-out-btn">
+                Sign Out
+              </button>
+            </div>
+            <div className="toggle-group">
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={outputMode === 'div'}
+                  onChange={(e) => setOutputMode(e.target.checked ? 'div' : 'clipboard')}
+                />
+                <span className="slider"></span>
+              </label>
+              <span className="toggle-label">
+                {outputMode === 'div' ? 'Show in Div' : 'Copy to Clipboard'}
+              </span>
+            </div>
           </div>
 
           <div className="results">
@@ -298,7 +359,7 @@ function DriveSearch() {
               <div
                 key={file.id}
                 className="result-item"
-                onClick={() => copyToClipboard(file.id, file.name, file.mimeType)}
+                onClick={() => handleFileClick(file.id, file.name, file.mimeType)}
               >
                 <span className="file-icon">
                   {file.mimeType.includes('folder') ? '📁' : '📄'}
@@ -310,9 +371,80 @@ function DriveSearch() {
 
           {status && <div className="status">{status}</div>}
 
+          {outputMode === 'div' && fileContent && (
+            <div className="file-content-display">
+              <div className="content-header">
+                <span>{currentFileName}</span>
+                <div className="content-actions">
+                  <button
+                    className="copy-btn"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(fileContent);
+                      setStatus(`Copied "${currentFileName}" to clipboard`);
+                    }}
+                  >
+                    Copy
+                  </button>
+                  <button
+                    className="clear-btn"
+                    onClick={() => {
+                      setFileContent('');
+                      setCurrentFileName('');
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <pre>{fileContent}</pre>
+            </div>
+          )}
+
           <div className="email-section">
-            <button onClick={fetchTodaysEmails} disabled={emailLoading}>
-              {emailLoading ? 'Loading...' : "Fetch Today's Emails"}
+            <div className="date-range-selector">
+              <label>
+                <input
+                  type="radio"
+                  name="emailDateRange"
+                  value="today"
+                  checked={emailDateRange === 'today'}
+                  onChange={(e) => setEmailDateRange(e.target.value)}
+                />
+                Today
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="emailDateRange"
+                  value="yesterday"
+                  checked={emailDateRange === 'yesterday'}
+                  onChange={(e) => setEmailDateRange(e.target.value)}
+                />
+                Yesterday
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="emailDateRange"
+                  value="dayBefore"
+                  checked={emailDateRange === 'dayBefore'}
+                  onChange={(e) => setEmailDateRange(e.target.value)}
+                />
+                2 Days Ago
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="emailDateRange"
+                  value="threeDays"
+                  checked={emailDateRange === 'threeDays'}
+                  onChange={(e) => setEmailDateRange(e.target.value)}
+                />
+                3 Days Ago
+              </label>
+            </div>
+            <button onClick={fetchEmails} disabled={emailLoading}>
+              {emailLoading ? 'Loading...' : 'Fetch Emails'}
             </button>
             <button onClick={() => setEmails([])} className="clear-btn">
               Clear
