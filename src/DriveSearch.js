@@ -45,7 +45,7 @@ function DriveSearch() {
   const [fileContent, setFileContent] = useState('');
   const [currentFileName, setCurrentFileName] = useState('');
   const [currentFileId, setCurrentFileId] = useState('');
-  const [currentFileMimeType, setCurrentFileMimeType] = useState('');
+  const [, setCurrentFileMimeType] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
