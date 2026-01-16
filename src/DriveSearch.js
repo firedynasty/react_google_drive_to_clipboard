@@ -1,7 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/calendar.readonly';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
+
+// Email label mapping: domain pattern -> friendly label name
+// Add your own mappings here! Partial matches work (e.g., 'newsletter' matches 'dailynewsletter.com')
+const EMAIL_LABELS = {
+  'github.com': 'GitHub',
+  'linkedin.com': 'LinkedIn',
+  'google.com': 'Google',
+  'amazon': 'Amazon',
+  'newsletter': 'Newsletters',
+  'noreply': 'No-Reply',
+  // Add more mappings below:
+  // 'example.com': 'Example',
+};
+
+// Helper function to get label from domain
+const getLabelFromDomain = (domain) => {
+  if (!domain) return 'Unknown';
+  const lowerDomain = domain.toLowerCase();
+  for (const [pattern, label] of Object.entries(EMAIL_LABELS)) {
+    if (lowerDomain.includes(pattern.toLowerCase())) {
+      return label;
+    }
+  }
+  return domain; // Return raw domain if no match
+};
 
 function DriveSearch() {
   const [accessToken, setAccessToken] = useState(null);
@@ -13,11 +38,21 @@ function DriveSearch() {
   const [emails, setEmails] = useState([]);
   const [emailLoading, setEmailLoading] = useState(false);
   const [emailDateRange, setEmailDateRange] = useState('today');
+  const [selectedLabel, setSelectedLabel] = useState('All');
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [outputMode, setOutputMode] = useState('clipboard');
   const [fileContent, setFileContent] = useState('');
   const [currentFileName, setCurrentFileName] = useState('');
+  const [currentFileId, setCurrentFileId] = useState('');
+  const [currentFileMimeType, setCurrentFileMimeType] = useState('');
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [emailModal, setEmailModal] = useState({ open: false, email: null, body: '', loading: false });
+  const [gmailLabels, setGmailLabels] = useState([]);
+  const [selectedGmailLabel, setSelectedGmailLabel] = useState('');
+  const [applyingLabel, setApplyingLabel] = useState(false);
 
   useEffect(() => {
     const initClient = () => {
@@ -130,6 +165,10 @@ function DriveSearch() {
       } else {
         setFileContent(content);
         setCurrentFileName(fileName);
+        setCurrentFileId(fileId);
+        setCurrentFileMimeType(mimeType);
+        setIsEditMode(false);
+        setEditContent('');
         setStatus(`Loaded "${fileName}"`);
       }
     } catch (error) {
@@ -140,6 +179,187 @@ function DriveSearch() {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter') {
       searchFiles();
+    }
+  };
+
+  const toggleEditMode = () => {
+    if (!isEditMode) {
+      // Switch to Edit mode
+      setEditContent(fileContent);
+      setIsEditMode(true);
+    } else {
+      // Switch to View mode - apply edits
+      setFileContent(editContent);
+      setIsEditMode(false);
+    }
+  };
+
+  const saveFileToGoogleDrive = async () => {
+    if (!currentFileId || !accessToken) return;
+
+    setSaving(true);
+    setStatus(`Saving "${currentFileName}"...`);
+
+    try {
+      const contentToSave = isEditMode ? editContent : fileContent;
+
+      const response = await fetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${currentFileId}?uploadType=media`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'text/plain',
+          },
+          body: contentToSave,
+        }
+      );
+
+      // Check for success (200, 201, or any 2xx status)
+      if (response.status >= 200 && response.status < 300) {
+        // Update local state
+        setFileContent(contentToSave);
+        setIsEditMode(false);
+        setStatus(`Saved "${currentFileName}" successfully!`);
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+      }
+    } catch (error) {
+      setStatus('Error saving: ' + error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Fetch Gmail labels when signed in
+  const fetchGmailLabels = useCallback(async () => {
+    if (!accessToken) return;
+
+    try {
+      const response = await fetch(
+        'https://www.googleapis.com/gmail/v1/users/me/labels',
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!response.ok) throw new Error('Failed to fetch labels');
+
+      const data = await response.json();
+      // Filter to user-created labels and some useful system labels
+      const userLabels = (data.labels || [])
+        .filter(label => label.type === 'user' || ['INBOX', 'STARRED', 'IMPORTANT', 'TRASH'].includes(label.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setGmailLabels(userLabels);
+    } catch (error) {
+      console.error('Error fetching Gmail labels:', error);
+    }
+  }, [accessToken]);
+
+  // Fetch labels when access token changes
+  useEffect(() => {
+    if (accessToken) {
+      fetchGmailLabels();
+    }
+  }, [accessToken, fetchGmailLabels]);
+
+  // Open email modal and fetch body
+  const openEmailModal = async (email) => {
+    setEmailModal({ open: true, email, body: '', loading: true });
+    setSelectedGmailLabel('');
+
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/gmail/v1/users/me/messages/${email.id}?format=full`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }
+      );
+
+      if (!response.ok) throw new Error('Failed to fetch email');
+
+      const data = await response.json();
+
+      // Extract email body
+      let body = '';
+      const payload = data.payload;
+
+      const decodeBase64 = (str) => {
+        try {
+          return decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
+        } catch {
+          return atob(str.replace(/-/g, '+').replace(/_/g, '/'));
+        }
+      };
+
+      const extractBody = (part) => {
+        if (part.body?.data) {
+          return decodeBase64(part.body.data);
+        }
+        if (part.parts) {
+          for (const subPart of part.parts) {
+            // Prefer plain text
+            if (subPart.mimeType === 'text/plain' && subPart.body?.data) {
+              return decodeBase64(subPart.body.data);
+            }
+          }
+          // Fallback to HTML
+          for (const subPart of part.parts) {
+            if (subPart.mimeType === 'text/html' && subPart.body?.data) {
+              const html = decodeBase64(subPart.body.data);
+              // Strip HTML tags for display
+              return html.replace(/<[^>]*>/g, '');
+            }
+          }
+          // Recursive search
+          for (const subPart of part.parts) {
+            const result = extractBody(subPart);
+            if (result) return result;
+          }
+        }
+        return '';
+      };
+
+      body = extractBody(payload) || '(No body content)';
+      setEmailModal({ open: true, email, body, loading: false });
+    } catch (error) {
+      setEmailModal({ open: true, email, body: 'Error loading email: ' + error.message, loading: false });
+    }
+  };
+
+  // Apply label to email
+  const applyLabelToEmail = async () => {
+    if (!selectedGmailLabel || !emailModal.email) return;
+
+    setApplyingLabel(true);
+
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/gmail/v1/users/me/messages/${emailModal.email.id}/modify`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            addLabelIds: [selectedGmailLabel],
+          }),
+        }
+      );
+
+      if (response.status >= 200 && response.status < 300) {
+        const labelName = gmailLabels.find(l => l.id === selectedGmailLabel)?.name || selectedGmailLabel;
+        setStatus(`Applied label "${labelName}" to email`);
+        setEmailModal({ ...emailModal, open: false });
+      } else {
+        throw new Error('Failed to apply label');
+      }
+    } catch (error) {
+      setStatus('Error applying label: ' + error.message);
+    } finally {
+      setApplyingLabel(false);
     }
   };
 
@@ -224,12 +444,14 @@ function DriveSearch() {
           const from = getHeader('From');
           const domainMatch = from.match(/@([^>]+)/);
           const domain = domainMatch ? domainMatch[1] : 'Unknown';
+          const label = getLabelFromDomain(domain);
 
           return {
             id: msg.id,
             subject: getHeader('Subject') || 'No Subject',
             from,
             domain,
+            label,
             date: getHeader('Date'),
           };
         })
@@ -301,6 +523,39 @@ function DriveSearch() {
     }
   }, [accessToken]);
 
+  // Compute label counts from emails (grouped by label)
+  const labelCounts = React.useMemo(() => {
+    const counts = {};
+    emails.forEach((email) => {
+      const lbl = email.label || 'Unknown';
+      counts[lbl] = (counts[lbl] || 0) + 1;
+    });
+    return counts;
+  }, [emails]);
+
+  // Get sorted labels for dropdown
+  const sortedLabels = React.useMemo(() => {
+    return Object.entries(labelCounts)
+      .sort((a, b) => b[1] - a[1]) // Sort by count descending
+      .map(([label]) => label);
+  }, [labelCounts]);
+
+  // Filter emails based on selected label
+  const filteredEmails = React.useMemo(() => {
+    if (selectedLabel === 'All') return emails;
+    return emails.filter((email) => email.label === selectedLabel);
+  }, [emails, selectedLabel]);
+
+  // Cycle through labels (All -> first label -> second label -> ... -> All)
+  const cycleLabel = useCallback(() => {
+    if (sortedLabels.length === 0) return;
+
+    const allOptions = ['All', ...sortedLabels];
+    const currentIndex = allOptions.indexOf(selectedLabel);
+    const nextIndex = (currentIndex + 1) % allOptions.length;
+    setSelectedLabel(allOptions[nextIndex]);
+  }, [sortedLabels, selectedLabel]);
+
   if (!CLIENT_ID) {
     return (
       <div className="drive-search">
@@ -340,17 +595,33 @@ function DriveSearch() {
               </button>
             </div>
             <div className="toggle-group">
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={outputMode === 'div'}
-                  onChange={(e) => setOutputMode(e.target.checked ? 'div' : 'clipboard')}
-                />
-                <span className="slider"></span>
-              </label>
-              <span className="toggle-label">
-                {outputMode === 'div' ? 'Show in Div' : 'Copy to Clipboard'}
-              </span>
+              <div className="output-mode-selector">
+                <label>
+                  <input
+                    type="radio"
+                    name="outputMode"
+                    value="clipboard"
+                    checked={outputMode === 'clipboard'}
+                    onChange={(e) => setOutputMode(e.target.value)}
+                  />
+                  Copy to Clipboard
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="outputMode"
+                    value="div"
+                    checked={outputMode === 'div'}
+                    onChange={(e) => setOutputMode(e.target.value)}
+                  />
+                  View/Edit
+                </label>
+              </div>
+              {emails.length > 0 && (
+                <button onClick={cycleLabel} className="cycle-label-btn">
+                  {selectedLabel} ({selectedLabel === 'All' ? emails.length : labelCounts[selectedLabel] || 0})
+                </button>
+              )}
             </div>
           </div>
 
@@ -379,24 +650,52 @@ function DriveSearch() {
                   <button
                     className="copy-btn"
                     onClick={async () => {
-                      await navigator.clipboard.writeText(fileContent);
+                      const contentToCopy = isEditMode ? editContent : fileContent;
+                      await navigator.clipboard.writeText(contentToCopy);
                       setStatus(`Copied "${currentFileName}" to clipboard`);
                     }}
                   >
                     Copy
                   </button>
                   <button
+                    className="edit-btn"
+                    onClick={toggleEditMode}
+                  >
+                    {isEditMode ? 'View' : 'Edit'}
+                  </button>
+                  {isEditMode && (
+                    <button
+                      className="save-btn"
+                      onClick={saveFileToGoogleDrive}
+                      disabled={saving}
+                    >
+                      {saving ? 'Saving...' : 'Save'}
+                    </button>
+                  )}
+                  <button
                     className="clear-btn"
                     onClick={() => {
                       setFileContent('');
                       setCurrentFileName('');
+                      setCurrentFileId('');
+                      setCurrentFileMimeType('');
+                      setIsEditMode(false);
+                      setEditContent('');
                     }}
                   >
                     Clear
                   </button>
                 </div>
               </div>
-              <pre>{fileContent}</pre>
+              {isEditMode ? (
+                <textarea
+                  className="edit-textarea"
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                />
+              ) : (
+                <pre>{fileContent}</pre>
+              )}
             </div>
           )}
 
@@ -446,18 +745,39 @@ function DriveSearch() {
             <button onClick={fetchEmails} disabled={emailLoading}>
               {emailLoading ? 'Loading...' : 'Fetch Emails'}
             </button>
-            <button onClick={() => setEmails([])} className="clear-btn">
+            <button onClick={() => { setEmails([]); setSelectedLabel('All'); }} className="clear-btn">
               Clear
             </button>
 
+            {emails.length > 0 && (
+              <div className="label-filter">
+                <select
+                  value={selectedLabel}
+                  onChange={(e) => setSelectedLabel(e.target.value)}
+                  className="label-dropdown"
+                >
+                  <option value="All">All ({emails.length})</option>
+                  {sortedLabels.map((label) => (
+                    <option key={label} value={label}>
+                      {label} ({labelCounts[label]})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="email-list">
-              {emails.map((email, index) => (
-                <div key={email.id} className="email-item">
+              {filteredEmails.map((email, index) => (
+                <div
+                  key={email.id}
+                  className="email-item clickable"
+                  onClick={() => openEmailModal(email)}
+                >
                   <div className="email-index">{index + 1}.</div>
                   <div className="email-content">
                     <div className="email-subject">{email.subject}</div>
                     <div className="email-from">From: {email.from}</div>
-                    <div className="email-domain">Domain: {email.domain}</div>
+                    <div className="email-label">Label: {email.label}</div>
                     <div className="email-date">Date: {email.date}</div>
                   </div>
                 </div>
@@ -487,6 +807,64 @@ function DriveSearch() {
               ))}
             </div>
           </div>
+
+          {/* Email Modal */}
+          {emailModal.open && (
+            <div className="email-modal-overlay" onClick={() => setEmailModal({ ...emailModal, open: false })}>
+              <div className="email-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="email-modal-header">
+                  <h3>{emailModal.email?.subject}</h3>
+                  <button
+                    className="modal-close-btn"
+                    onClick={() => setEmailModal({ ...emailModal, open: false })}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="email-modal-meta">
+                  <div>From: {emailModal.email?.from}</div>
+                  <div>Date: {emailModal.email?.date}</div>
+                </div>
+                <div className="email-modal-body">
+                  {emailModal.loading ? (
+                    <div className="loading">Loading email...</div>
+                  ) : (
+                    <pre>{emailModal.body}</pre>
+                  )}
+                </div>
+                <div className="email-modal-actions">
+                  <select
+                    value={selectedGmailLabel}
+                    onChange={(e) => setSelectedGmailLabel(e.target.value)}
+                    className="gmail-label-dropdown"
+                  >
+                    <option value="">-- Select Label --</option>
+                    {gmailLabels.map((label) => (
+                      <option key={label.id} value={label.id}>
+                        {label.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={applyLabelToEmail}
+                    disabled={!selectedGmailLabel || applyingLabel}
+                    className="apply-label-btn"
+                  >
+                    {applyingLabel ? 'Applying...' : 'Apply Label'}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(emailModal.body);
+                      setStatus('Copied email body to clipboard');
+                    }}
+                    className="copy-body-btn"
+                  >
+                    Copy Body
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
