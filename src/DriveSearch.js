@@ -41,7 +41,7 @@ function DriveSearch() {
   const [selectedLabel, setSelectedLabel] = useState('All');
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
-  const [outputMode, setOutputMode] = useState('clipboard');
+  const [outputMode, setOutputMode] = useState('div');
   const [fileContent, setFileContent] = useState('');
   const [currentFileName, setCurrentFileName] = useState('');
   const [currentFileId, setCurrentFileId] = useState('');
