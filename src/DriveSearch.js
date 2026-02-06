@@ -859,7 +859,11 @@ function DriveSearch() {
                     </thead>
                     <tbody>
                       {parseCsv(fileContent).slice(1).map((row, ri) => (
-                        <tr key={ri}>
+                        <tr key={ri} onClick={async () => {
+                          const cellText = row[1] || '';
+                          await navigator.clipboard.writeText(cellText);
+                          setStatus(`Copied "${cellText.length > 40 ? cellText.substring(0, 40) + '...' : cellText}" to clipboard`);
+                        }}>
                           {row.map((cell, ci) => (
                             <td key={ci}>{cell}</td>
                           ))}
