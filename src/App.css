@@ -782,3 +782,59 @@ input:checked + .slider:before {
 .copy-body-btn:hover {
   background: #2d8f47;
 }
+
+/* Sheet Picker Modal */
+.sheet-picker-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.sheet-picker-modal {
+  background: #1a1a2e;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #333;
+}
+
+.sheet-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid #333;
+}
+
+.sheet-picker-header h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 18px;
+}
+
+.sheet-picker-list {
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.sheet-picker-item {
+  padding: 12px 16px;
+  color: #eee;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.sheet-picker-item:hover {
+  background: #1f3460;
+}

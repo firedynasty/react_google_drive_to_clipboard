@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import * as XLSX from 'xlsx';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
@@ -100,6 +101,10 @@ function DriveSearch() {
   const [selectedGmailLabel, setSelectedGmailLabel] = useState('');
   const [applyingLabel, setApplyingLabel] = useState(false);
   const [deletingEmails, setDeletingEmails] = useState(false);
+  const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
+  const [sheetNames, setSheetNames] = useState([]);
+  const [pendingWorkbook, setPendingWorkbook] = useState(null);
+  const [pendingFileName, setPendingFileName] = useState('');
 
   useEffect(() => {
     const initClient = () => {
@@ -193,6 +198,30 @@ function DriveSearch() {
         );
         if (!response.ok) throw new Error('Export failed');
         content = await response.text();
+      } else if (/\.xlsx?$/i.test(fileName)) {
+        // Excel files - download as binary and parse with SheetJS
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+        if (!response.ok) throw new Error('Download failed');
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+
+        if (workbook.SheetNames.length === 1) {
+          content = XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+          mimeType = 'application/vnd.google-apps.spreadsheet';
+        } else {
+          // Multiple sheets - show picker
+          setPendingWorkbook(workbook);
+          setPendingFileName(fileName);
+          setSheetNames(workbook.SheetNames);
+          setSheetPickerOpen(true);
+          setStatus(`"${fileName}" has ${workbook.SheetNames.length} sheets - pick one`);
+          return;
+        }
       } else {
         // Regular files - download content
         const response = await fetch(
@@ -227,6 +256,21 @@ function DriveSearch() {
     if (e.key === 'Enter') {
       searchFiles();
     }
+  };
+
+  const pickSheet = (sheetName) => {
+    const sheet = pendingWorkbook.Sheets[sheetName];
+    const csv = XLSX.utils.sheet_to_csv(sheet);
+    setFileContent(csv);
+    setCurrentFileName(`${pendingFileName} [${sheetName}]`);
+    setCurrentFileMimeType('application/vnd.google-apps.spreadsheet');
+    setIsEditMode(false);
+    setEditContent('');
+    setSheetPickerOpen(false);
+    setPendingWorkbook(null);
+    setPendingFileName('');
+    setSheetNames([]);
+    setStatus(`Loaded sheet "${sheetName}"`);
   };
 
   const toggleEditMode = () => {
@@ -925,6 +969,34 @@ function DriveSearch() {
               ))}
             </div>
           </div>
+
+          {/* Sheet Picker Modal */}
+          {sheetPickerOpen && (
+            <div className="sheet-picker-overlay" onClick={() => setSheetPickerOpen(false)}>
+              <div className="sheet-picker-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="sheet-picker-header">
+                  <h3>Select a Sheet</h3>
+                  <button
+                    className="modal-close-btn"
+                    onClick={() => setSheetPickerOpen(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="sheet-picker-list">
+                  {sheetNames.map((name) => (
+                    <div
+                      key={name}
+                      className="sheet-picker-item"
+                      onClick={() => pickSheet(name)}
+                    >
+                      {name}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Email Modal */}
           {emailModal.open && (
