@@ -187,11 +187,33 @@ function DriveSearch() {
     try {
       let content;
 
-      // Handle Google Docs types - export as CSV for spreadsheets, plain text for others
-      if (mimeType.startsWith('application/vnd.google-apps')) {
-        const exportMime = mimeType === 'application/vnd.google-apps.spreadsheet' ? 'text/csv' : 'text/plain';
+      // Handle native Google Sheets - export as XLSX to get all sheets
+      if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+        const exportMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
         const response = await fetch(
           `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+        if (!response.ok) throw new Error('Export failed');
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+
+        if (workbook.SheetNames.length === 1) {
+          content = XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+        } else {
+          setPendingWorkbook(workbook);
+          setPendingFileName(fileName);
+          setSheetNames(workbook.SheetNames);
+          setSheetPickerOpen(true);
+          setStatus(`"${fileName}" has ${workbook.SheetNames.length} sheets - pick one`);
+          return;
+        }
+      } else if (mimeType.startsWith('application/vnd.google-apps')) {
+        // Other Google Apps files (Docs, Slides, etc.)
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent('text/plain')}`,
           {
             headers: { Authorization: `Bearer ${accessToken}` },
           }
