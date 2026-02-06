@@ -604,6 +604,40 @@ input:checked + .slider:before {
   overflow-y: auto;
 }
 
+/* CSV Table */
+.csv-table-wrapper {
+  max-height: 400px;
+  overflow: auto;
+  padding: 10px;
+}
+
+.csv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-family: monospace;
+}
+
+.csv-table th {
+  background: #1a1a3e;
+  color: #61dafb;
+  padding: 8px 12px;
+  text-align: left;
+  border: 1px solid #333;
+  position: sticky;
+  top: 0;
+}
+
+.csv-table td {
+  padding: 6px 12px;
+  border: 1px solid #333;
+  color: #eee;
+}
+
+.csv-table tbody tr:hover {
+  background: #1a1a2e;
+}
+
 /* Email Modal */
 .email-modal-overlay {
   position: fixed;

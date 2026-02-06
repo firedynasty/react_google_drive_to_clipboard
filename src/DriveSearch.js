@@ -28,6 +28,52 @@ const getLabelFromDomain = (domain) => {
   return domain; // Return raw domain if no match
 };
 
+function parseCsvRows(text) {
+  const rows = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        rows.push(current);
+        current = '';
+      } else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+        rows.push(current);
+        current = '';
+        if (ch === '\r') i++;
+        return { cells: rows, rest: text.slice(i + 1) };
+      } else {
+        current += ch;
+      }
+    }
+  }
+  rows.push(current);
+  return { cells: rows, rest: '' };
+}
+
+function parseCsv(text) {
+  const result = [];
+  let remaining = text.trim();
+  while (remaining.length > 0) {
+    const { cells, rest } = parseCsvRows(remaining);
+    result.push(cells);
+    remaining = rest;
+  }
+  return result;
+}
+
 function DriveSearch() {
   const [accessToken, setAccessToken] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,7 +91,7 @@ function DriveSearch() {
   const [fileContent, setFileContent] = useState('');
   const [currentFileName, setCurrentFileName] = useState('');
   const [currentFileId, setCurrentFileId] = useState('');
-  const [, setCurrentFileMimeType] = useState('');
+  const [currentFileMimeType, setCurrentFileMimeType] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -136,9 +182,9 @@ function DriveSearch() {
     try {
       let content;
 
-      // Handle Google Docs types - export as plain text
+      // Handle Google Docs types - export as CSV for spreadsheets, plain text for others
       if (mimeType.startsWith('application/vnd.google-apps')) {
-        const exportMime = 'text/plain';
+        const exportMime = mimeType === 'application/vnd.google-apps.spreadsheet' ? 'text/csv' : 'text/plain';
         const response = await fetch(
           `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`,
           {
@@ -735,6 +781,27 @@ function DriveSearch() {
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                 />
+              ) : currentFileMimeType === 'application/vnd.google-apps.spreadsheet' ? (
+                <div className="csv-table-wrapper">
+                  <table className="csv-table">
+                    <thead>
+                      <tr>
+                        {parseCsv(fileContent)[0]?.map((header, i) => (
+                          <th key={i}>{header}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {parseCsv(fileContent).slice(1).map((row, ri) => (
+                        <tr key={ri}>
+                          {row.map((cell, ci) => (
+                            <td key={ci}>{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <pre>{fileContent}</pre>
               )}
