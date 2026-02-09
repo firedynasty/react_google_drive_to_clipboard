@@ -101,6 +101,11 @@ function DriveSearch() {
   const [selectedGmailLabel, setSelectedGmailLabel] = useState('');
   const [applyingLabel, setApplyingLabel] = useState(false);
   const [deletingEmails, setDeletingEmails] = useState(false);
+  const [senderSearch, setSenderSearch] = useState('');
+  const [senderEmails, setSenderEmails] = useState([]);
+  const [senderSearchLoading, setSenderSearchLoading] = useState(false);
+  const [deletingSenderEmails, setDeletingSenderEmails] = useState(false);
+  const [confirmingSenderDelete, setConfirmingSenderDelete] = useState(false);
   const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
   const [sheetNames, setSheetNames] = useState([]);
   const [pendingWorkbook, setPendingWorkbook] = useState(null);
@@ -711,6 +716,84 @@ function DriveSearch() {
     }
   };
 
+  // Search all emails from a specific sender address
+  const searchBySender = async () => {
+    if (!accessToken || !senderSearch.trim()) return;
+
+    setSenderSearchLoading(true);
+    setSenderEmails([]);
+    setStatus(`Searching emails from "${senderSearch}"...`);
+
+    try {
+      const query = `from:${senderSearch.trim()}`;
+      let allMessages = [];
+      let pageToken = '';
+
+      // Paginate through all results
+      do {
+        const url = `https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=500${pageToken ? `&pageToken=${pageToken}` : ''}`;
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (!response.ok) throw new Error('Search failed');
+        const data = await response.json();
+        allMessages = allMessages.concat(data.messages || []);
+        pageToken = data.nextPageToken || '';
+      } while (pageToken);
+
+      setSenderEmails(allMessages);
+      setStatus(`Found ${allMessages.length} email(s) from "${senderSearch}"`);
+    } catch (error) {
+      setStatus('Error: ' + error.message);
+    } finally {
+      setSenderSearchLoading(false);
+    }
+  };
+
+  // Delete all emails found by sender search (called after inline confirm)
+  const deleteSenderEmails = async () => {
+    if (!accessToken || senderEmails.length === 0) return;
+
+    setConfirmingSenderDelete(false);
+    setDeletingSenderEmails(true);
+    setStatus(`Trashing ${senderEmails.length} emails...`);
+
+    try {
+      // Use batch delete in chunks of 1000 (Gmail API limit)
+      const ids = senderEmails.map((m) => m.id);
+      for (let i = 0; i < ids.length; i += 1000) {
+        const chunk = ids.slice(i, i + 1000);
+        const response = await fetch(
+          'https://www.googleapis.com/gmail/v1/users/me/messages/batchModify',
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              ids: chunk,
+              addLabelIds: ['TRASH'],
+              removeLabelIds: ['INBOX'],
+            }),
+          }
+        );
+        if (!response.ok) throw new Error(`Batch trash failed (chunk ${i})`);
+      }
+
+      // Also remove from date-filtered emails if any overlap
+      const trashedIds = new Set(ids);
+      setEmails((prev) => prev.filter((e) => !trashedIds.has(e.id)));
+
+      setStatus(`Trashed ${senderEmails.length} email(s) from "${senderSearch}"`);
+      setSenderEmails([]);
+    } catch (error) {
+      setStatus('Error trashing emails: ' + error.message);
+    } finally {
+      setDeletingSenderEmails(false);
+    }
+  };
+
   if (!CLIENT_ID) {
     return (
       <div className="drive-search">
@@ -900,6 +983,45 @@ function DriveSearch() {
               )}
             </div>
           )}
+
+          <div className="sender-search-section">
+            <div className="sender-search-box">
+              <input
+                type="text"
+                value={senderSearch}
+                onChange={(e) => { setSenderSearch(e.target.value); setConfirmingSenderDelete(false); }}
+                onKeyPress={(e) => e.key === 'Enter' && searchBySender()}
+                placeholder="Sender address (e.g. reply@ss.email.nextdoor.com)"
+              />
+              <button onClick={searchBySender} disabled={senderSearchLoading || !senderSearch.trim()}>
+                {senderSearchLoading ? 'Searching...' : 'Search Sender'}
+              </button>
+              {senderEmails.length > 0 && !confirmingSenderDelete && (
+                <button
+                  onClick={() => setConfirmingSenderDelete(true)}
+                  disabled={deletingSenderEmails}
+                  className="delete-emails-btn"
+                >
+                  {deletingSenderEmails ? 'Deleting...' : `Delete All (${senderEmails.length})`}
+                </button>
+              )}
+              {senderEmails.length > 0 && (
+                <button
+                  className="clear-btn"
+                  onClick={() => { setSenderEmails([]); setSenderSearch(''); setConfirmingSenderDelete(false); }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {confirmingSenderDelete && (
+              <div className="confirm-delete-prompt">
+                <span>Trash {senderEmails.length} email(s) from "{senderSearch}"?</span>
+                <button onClick={deleteSenderEmails} className="confirm-yes-btn">Yes, Delete</button>
+                <button onClick={() => setConfirmingSenderDelete(false)} className="confirm-no-btn">Cancel</button>
+              </div>
+            )}
+          </div>
 
           <div className="email-section">
             <div className="date-range-selector">
