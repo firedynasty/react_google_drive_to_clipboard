@@ -109,7 +109,7 @@ function DriveSearch() {
   const [sheetNames, setSheetNames] = useState([]);
   const [pendingWorkbook, setPendingWorkbook] = useState(null);
   const [pendingFileName, setPendingFileName] = useState('');
-  const [copyCellIndex, setCopyCellIndex] = useState(1);
+  const [copyCellIndex, setCopyCellIndex] = useState(2);
   const [selectedRow, setSelectedRow] = useState(null);
 
   useEffect(() => {
