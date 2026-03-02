@@ -553,29 +553,6 @@ input:checked + .slider:before {
   color: #ccc;
 }
 
-.output-mode-selector {
-  display: flex;
-  gap: 15px;
-}
-
-.output-mode-selector label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  color: #ccc;
-  font-size: 14px;
-}
-
-.output-mode-selector input[type="radio"] {
-  accent-color: #4285f4;
-  cursor: pointer;
-}
-
-.output-mode-selector label:hover {
-  color: #fff;
-}
-
 .cycle-label-btn {
   padding: 8px 14px;
   font-size: 13px;
@@ -763,6 +740,11 @@ input:checked + .slider:before {
 
 .csv-table tbody tr:hover {
   background: #1a1a2e;
+}
+
+.csv-table tbody tr.selected-row {
+  background: #2a2a5e;
+  outline: 1px solid #61dafb;
 }
 
 /* Email Modal */

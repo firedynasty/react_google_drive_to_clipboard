@@ -88,7 +88,6 @@ function DriveSearch() {
   const [selectedLabel, setSelectedLabel] = useState('All');
   const [events, setEvents] = useState([]);
   const [eventsLoading, setEventsLoading] = useState(false);
-  const [outputMode, setOutputMode] = useState('div');
   const [fileContent, setFileContent] = useState('');
   const [currentFileName, setCurrentFileName] = useState('');
   const [currentFileId, setCurrentFileId] = useState('');
@@ -111,6 +110,7 @@ function DriveSearch() {
   const [pendingWorkbook, setPendingWorkbook] = useState(null);
   const [pendingFileName, setPendingFileName] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(1);
+  const [selectedRow, setSelectedRow] = useState(null);
 
   useEffect(() => {
     const initClient = () => {
@@ -262,19 +262,13 @@ function DriveSearch() {
         content = await response.text();
       }
 
-      // Check output mode
-      if (outputMode === 'clipboard') {
-        await navigator.clipboard.writeText(content);
-        setStatus(`Copied "${fileName}" to clipboard`);
-      } else {
-        setFileContent(content);
-        setCurrentFileName(fileName);
-        setCurrentFileId(fileId);
-        setCurrentFileMimeType(mimeType);
-        setIsEditMode(false);
-        setEditContent('');
-        setStatus(`Loaded "${fileName}"`);
-      }
+      setFileContent(content);
+      setCurrentFileName(fileName);
+      setCurrentFileId(fileId);
+      setCurrentFileMimeType(mimeType);
+      setIsEditMode(false);
+      setEditContent('');
+      setStatus(`Loaded "${fileName}"`);
     } catch (error) {
       setStatus('Error: ' + error.message);
     }
@@ -833,28 +827,6 @@ function DriveSearch() {
               </button>
             </div>
             <div className="toggle-group">
-              <div className="output-mode-selector">
-                <label>
-                  <input
-                    type="radio"
-                    name="outputMode"
-                    value="clipboard"
-                    checked={outputMode === 'clipboard'}
-                    onChange={(e) => setOutputMode(e.target.value)}
-                  />
-                  Copy to Clipboard
-                </label>
-                <label>
-                  <input
-                    type="radio"
-                    name="outputMode"
-                    value="div"
-                    checked={outputMode === 'div'}
-                    onChange={(e) => setOutputMode(e.target.value)}
-                  />
-                  View/Edit
-                </label>
-              </div>
               {emails.length > 0 && (
                 <button onClick={cycleLabel} className="cycle-label-btn">
                   {selectedLabel} ({selectedLabel === 'All' ? emails.length : labelCounts[selectedLabel] || 0})
@@ -880,7 +852,7 @@ function DriveSearch() {
 
           {status && <div className="status">{status}</div>}
 
-          {outputMode === 'div' && fileContent && (
+          {fileContent && (
             <div className="file-content-display">
               <div className="content-header">
                 <span>{currentFileName}</span>
@@ -965,7 +937,8 @@ function DriveSearch() {
                     </thead>
                     <tbody>
                       {parseCsv(fileContent).slice(1).map((row, ri) => (
-                        <tr key={ri} onClick={async () => {
+                        <tr key={ri} className={selectedRow === ri ? 'selected-row' : ''} onClick={async () => {
+                          setSelectedRow(ri);
                           const cellText = row[copyCellIndex] || '';
                           await navigator.clipboard.writeText(cellText);
                           setStatus(`Copied "${cellText.length > 40 ? cellText.substring(0, 40) + '...' : cellText}" to clipboard`);
