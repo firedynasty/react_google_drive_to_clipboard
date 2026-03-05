@@ -111,6 +111,7 @@ function DriveSearch() {
   const [pendingFileName, setPendingFileName] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(2);
   const [selectedRow, setSelectedRow] = useState(null);
+  const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
 
   useEffect(() => {
     const initClient = () => {
@@ -165,8 +166,11 @@ function DriveSearch() {
     setStatus('Searching...');
 
     try {
+      const mimeFilter = fileTypeToggle
+        ? `mimeType='application/vnd.google-apps.spreadsheet'`
+        : `mimeType='application/vnd.google-apps.document'`;
       const query = encodeURIComponent(
-        `name contains '${searchQuery}' and trashed=false`
+        `name contains '${searchQuery}' and trashed=false and ${mimeFilter}`
       );
       const response = await fetch(
         `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,mimeType)&orderBy=name`,
@@ -185,7 +189,7 @@ function DriveSearch() {
     } finally {
       setLoading(false);
     }
-  }, [searchQuery, accessToken]);
+  }, [searchQuery, accessToken, fileTypeToggle]);
 
   const handleFileClick = async (fileId, fileName, mimeType) => {
     setStatus(`Fetching ${fileName}...`);
@@ -827,6 +831,16 @@ function DriveSearch() {
               </button>
             </div>
             <div className="toggle-group">
+              <span className="toggle-label" style={{ color: !fileTypeToggle ? '#4285f4' : '#aaa' }}>Docs</span>
+              <label className="switch">
+                <input
+                  type="checkbox"
+                  checked={fileTypeToggle}
+                  onChange={(e) => setFileTypeToggle(e.target.checked)}
+                />
+                <span className="slider"></span>
+              </label>
+              <span className="toggle-label" style={{ color: fileTypeToggle ? '#34a853' : '#aaa' }}>Sheets</span>
               {emails.length > 0 && (
                 <button onClick={cycleLabel} className="cycle-label-btn">
                   {selectedLabel} ({selectedLabel === 'All' ? emails.length : labelCounts[selectedLabel] || 0})
