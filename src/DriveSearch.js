@@ -1113,105 +1113,106 @@ function DriveSearch() {
               Clear
             </button>
 
-            {emails.length > 0 && (
-              <div className="label-filter">
-                <select
-                  value={selectedLabel}
-                  onChange={(e) => setSelectedLabel(e.target.value)}
-                  className="label-dropdown"
-                >
-                  <option value="All">All ({emails.length})</option>
-                  {sortedLabels.map((label) => (
-                    <option key={label} value={label}>
-                      {label} ({labelCounts[label]})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-
             {(emails.length > 0 || trashEmails.length > 0) && (
-              <div className="email-pill-controls">
-                <button onClick={moveAllToTrash} className="move-all-btn to-trash" disabled={filteredEmails.length === 0}>
-                  All → Trash ({filteredEmails.length})
-                </button>
-                <button onClick={moveAllToKeep} className="move-all-btn to-keep" disabled={trashEmails.length === 0}>
-                  All → Keep ({trashEmails.length})
-                </button>
-                <button onClick={exportKeepEmails} className="export-btn" disabled={filteredEmails.length === 0}>
-                  Export Keep ({filteredEmails.length})
-                </button>
-                <button onClick={exportTrashEmails} className="export-btn" disabled={trashEmails.length === 0}>
-                  Export Trash ({trashEmails.length})
-                </button>
-              </div>
+              <>
+                <div className="email-pill-controls">
+                  <button onClick={moveAllToTrash} className="move-all-btn to-trash" disabled={filteredEmails.length === 0}>
+                    All → Trash ({filteredEmails.length})
+                  </button>
+                  <button onClick={moveAllToKeep} className="move-all-btn to-keep" disabled={trashEmails.length === 0}>
+                    All → Keep ({trashEmails.length})
+                  </button>
+                  <button onClick={exportKeepEmails} className="export-btn" disabled={filteredEmails.length === 0}>
+                    Export Keep ({filteredEmails.length})
+                  </button>
+                  <button onClick={exportTrashEmails} className="export-btn" disabled={trashEmails.length === 0}>
+                    Export Trash ({trashEmails.length})
+                  </button>
+                </div>
+
+                <div className="email-boards">
+                  <div
+                    className={`email-board keep-board${draggedEmail && trashEmails.find(e => e.id === draggedEmail) ? ' drag-over-target' : ''}`}
+                    onDragOver={handleBoardDragOver}
+                    onDrop={handleDropToKeep}
+                  >
+                    <div className="board-header">
+                      <span className="board-dot keep-dot"></span>
+                      <span>Keep ({filteredEmails.length})</span>
+                    </div>
+                    <div className="pill-zone">
+                      {filteredEmails.map((email) => (
+                        <div
+                          key={email.id}
+                          className={`email-pill${draggedEmail === email.id ? ' dragging' : ''}`}
+                          draggable
+                          onDragStart={() => handleEmailDragStart(email.id)}
+                          onDragEnd={handleEmailDragEnd}
+                          onClick={() => openEmailModal(email)}
+                          title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
+                        >
+                          <span className="pill-label-tag">{email.label}</span>
+                        </div>
+                      ))}
+                      {filteredEmails.length === 0 && <span className="empty-hint">Drop emails here to keep</span>}
+                    </div>
+                  </div>
+
+                  <div
+                    className={`email-board trash-board${draggedEmail && emails.find(e => e.id === draggedEmail) ? ' drag-over-target' : ''}`}
+                    onDragOver={handleBoardDragOver}
+                    onDrop={handleDropToTrash}
+                  >
+                    <div className="board-header">
+                      <span className="board-dot trash-dot"></span>
+                      <span>Trash ({trashEmails.length})</span>
+                    </div>
+                    <div className="pill-zone">
+                      {trashEmails.map((email) => (
+                        <div
+                          key={email.id}
+                          className={`email-pill trash-pill${draggedEmail === email.id ? ' dragging' : ''}`}
+                          draggable
+                          onDragStart={() => handleEmailDragStart(email.id)}
+                          onDragEnd={handleEmailDragEnd}
+                          onClick={() => openEmailModal(email)}
+                          title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
+                        >
+                          <span className="pill-label-tag">{email.label}</span>
+                        </div>
+                      ))}
+                      {trashEmails.length === 0 && <span className="empty-hint">Drag emails here to trash</span>}
+                    </div>
+                    {trashEmails.length > 0 && (
+                      <button
+                        onClick={confirmTrashEmails}
+                        disabled={deletingEmails}
+                        className="confirm-trash-btn"
+                      >
+                        {deletingEmails ? 'Trashing...' : `Confirm Trash (${trashEmails.length})`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
             )}
 
-            <div className="email-boards">
-              <div
-                className={`email-board keep-board${draggedEmail && trashEmails.find(e => e.id === draggedEmail) ? ' drag-over-target' : ''}`}
-                onDragOver={handleBoardDragOver}
-                onDrop={handleDropToKeep}
-              >
-                <div className="board-header">
-                  <span className="board-dot keep-dot"></span>
-                  <span>Keep ({filteredEmails.length})</span>
+            <div className="email-list">
+              {filteredEmails.map((email, index) => (
+                <div
+                  key={email.id}
+                  className="email-item clickable"
+                  onClick={() => openEmailModal(email)}
+                >
+                  <div className="email-index">{index + 1}.</div>
+                  <div className="email-content">
+                    <div className="email-subject">{email.subject}</div>
+                    <div className="email-from">From: {email.from}</div>
+                    <div className="email-label">Label: {email.label}</div>
+                    <div className="email-date">Date: {email.date}</div>
+                  </div>
                 </div>
-                <div className="pill-zone">
-                  {filteredEmails.map((email) => (
-                    <div
-                      key={email.id}
-                      className={`email-pill${draggedEmail === email.id ? ' dragging' : ''}`}
-                      draggable
-                      onDragStart={() => handleEmailDragStart(email.id)}
-                      onDragEnd={handleEmailDragEnd}
-                      onClick={() => openEmailModal(email)}
-                      title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
-                    >
-                      <span className="pill-label-tag">{email.label}</span>
-                      <span className="pill-subject">{email.subject.length > 35 ? email.subject.substring(0, 32) + '...' : email.subject}</span>
-                    </div>
-                  ))}
-                  {filteredEmails.length === 0 && <span className="empty-hint">Drop emails here to keep</span>}
-                </div>
-              </div>
-
-              <div
-                className={`email-board trash-board${draggedEmail && emails.find(e => e.id === draggedEmail) ? ' drag-over-target' : ''}`}
-                onDragOver={handleBoardDragOver}
-                onDrop={handleDropToTrash}
-              >
-                <div className="board-header">
-                  <span className="board-dot trash-dot"></span>
-                  <span>Trash ({trashEmails.length})</span>
-                </div>
-                <div className="pill-zone">
-                  {trashEmails.map((email) => (
-                    <div
-                      key={email.id}
-                      className={`email-pill trash-pill${draggedEmail === email.id ? ' dragging' : ''}`}
-                      draggable
-                      onDragStart={() => handleEmailDragStart(email.id)}
-                      onDragEnd={handleEmailDragEnd}
-                      onClick={() => openEmailModal(email)}
-                      title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
-                    >
-                      <span className="pill-label-tag">{email.label}</span>
-                      <span className="pill-subject">{email.subject.length > 35 ? email.subject.substring(0, 32) + '...' : email.subject}</span>
-                    </div>
-                  ))}
-                  {trashEmails.length === 0 && <span className="empty-hint">Drag emails here to trash</span>}
-                </div>
-                {trashEmails.length > 0 && (
-                  <button
-                    onClick={confirmTrashEmails}
-                    disabled={deletingEmails}
-                    className="confirm-trash-btn"
-                  >
-                    {deletingEmails ? 'Trashing...' : `Confirm Trash (${trashEmails.length})`}
-                  </button>
-                )}
-              </div>
+              ))}
             </div>
           </div>
 
