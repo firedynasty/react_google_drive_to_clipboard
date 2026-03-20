@@ -114,6 +114,7 @@ function DriveSearch() {
   const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
   const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
+  const [selectedTrashLabel, setSelectedTrashLabel] = useState(null); // clicked pill in right board filters list
 
   useEffect(() => {
     const initClient = () => {
@@ -767,6 +768,78 @@ function DriveSearch() {
     });
   };
 
+  // Export a specific domain from trash board to clipboard
+  const exportTrashDomain = (label) => {
+    const domainEmails = trashEmails.filter(e => e.label === label);
+    const text = domainEmails.map((e, i) =>
+      `--- Email ${i + 1} ---\nSubject: ${e.subject}\nFrom: ${e.from}\nDate: ${e.date}\nContent: ${e.snippet || '(no preview)'}`
+    ).join('\n\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setStatus(`Copied ${domainEmails.length} "${label}" emails to clipboard`);
+    });
+  };
+
+  // Trash a specific domain from trash board via Gmail API
+  const confirmTrashDomain = async (label) => {
+    const domainEmails = trashEmails.filter(e => e.label === label);
+    if (!accessToken || domainEmails.length === 0) return;
+    setDeletingEmails(true);
+    setStatus(`Trashing ${domainEmails.length} "${label}" emails...`);
+    try {
+      const ids = domainEmails.map(e => e.id);
+      for (let i = 0; i < ids.length; i += 1000) {
+        const chunk = ids.slice(i, i + 1000);
+        await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/batchModify', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ids: chunk, addLabelIds: ['TRASH'], removeLabelIds: ['INBOX'] }),
+        });
+      }
+      setStatus(`Trashed ${domainEmails.length} "${label}" emails`);
+      const trashedIds = new Set(ids);
+      setTrashEmails(prev => prev.filter(e => !trashedIds.has(e.id)));
+      if (selectedTrashLabel === label) setSelectedTrashLabel(null);
+    } catch (error) {
+      setStatus('Error trashing: ' + error.message);
+    } finally {
+      setDeletingEmails(false);
+    }
+  };
+
+  // Move a specific domain from trash back to keep
+  const moveDomainToKeep = (label) => {
+    const domainEmails = trashEmails.filter(e => e.label === label);
+    setEmails(prev => [...prev, ...domainEmails]);
+    setTrashEmails(prev => prev.filter(e => e.label !== label));
+    if (selectedTrashLabel === label) setSelectedTrashLabel(null);
+  };
+
+  // Unique domain labels in trash board with counts
+  const trashLabelCounts = React.useMemo(() => {
+    const counts = {};
+    trashEmails.forEach(e => {
+      counts[e.label] = (counts[e.label] || 0) + 1;
+    });
+    return counts;
+  }, [trashEmails]);
+
+  const trashLabels = React.useMemo(() => {
+    return Object.entries(trashLabelCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([label]) => label);
+  }, [trashLabelCounts]);
+
+  // Emails shown in the list: if a trash pill is selected, show that domain from trash; otherwise show keep
+  const listEmails = React.useMemo(() => {
+    if (selectedTrashLabel) {
+      return trashEmails.filter(e => e.label === selectedTrashLabel);
+    }
+    return filteredEmails;
+  }, [selectedTrashLabel, trashEmails, filteredEmails]);
+
   // Search all emails from a specific sender address
   const searchBySender = async () => {
     if (!accessToken || !senderSearch.trim()) return;
@@ -1165,23 +1238,41 @@ function DriveSearch() {
                   >
                     <div className="board-header">
                       <span className="board-dot trash-dot"></span>
-                      <span>Trash ({trashEmails.length})</span>
+                      <span>Staging ({trashEmails.length})</span>
                     </div>
                     <div className="pill-zone">
-                      {trashEmails.map((email) => (
+                      {trashLabels.map((label) => (
                         <div
-                          key={email.id}
-                          className={`email-pill trash-pill${draggedEmail === email.id ? ' dragging' : ''}`}
-                          draggable
-                          onDragStart={() => handleEmailDragStart(email.id)}
-                          onDragEnd={handleEmailDragEnd}
-                          onClick={() => openEmailModal(email)}
-                          title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
+                          key={label}
+                          className={`trash-domain-pill${selectedTrashLabel === label ? ' selected' : ''}`}
+                          onClick={() => setSelectedTrashLabel(selectedTrashLabel === label ? null : label)}
                         >
-                          <span className="pill-label-tag">{email.label}</span>
+                          <span className="pill-label-tag">{label} ({trashLabelCounts[label]})</span>
+                          <button
+                            className="pill-action-btn export-action"
+                            title={`Export ${label} to clipboard`}
+                            onClick={(e) => { e.stopPropagation(); exportTrashDomain(label); }}
+                          >
+                            Export
+                          </button>
+                          <button
+                            className="pill-action-btn trash-action"
+                            title={`Trash ${label}`}
+                            onClick={(e) => { e.stopPropagation(); confirmTrashDomain(label); }}
+                            disabled={deletingEmails}
+                          >
+                            Trash
+                          </button>
+                          <button
+                            className="pill-action-btn undo-action"
+                            title={`Move ${label} back to Keep`}
+                            onClick={(e) => { e.stopPropagation(); moveDomainToKeep(label); }}
+                          >
+                            ↩
+                          </button>
                         </div>
                       ))}
-                      {trashEmails.length === 0 && <span className="empty-hint">Drag emails here to trash</span>}
+                      {trashEmails.length === 0 && <span className="empty-hint">Drag emails here to stage for trash/export</span>}
                     </div>
                     {trashEmails.length > 0 && (
                       <button
@@ -1189,7 +1280,7 @@ function DriveSearch() {
                         disabled={deletingEmails}
                         className="confirm-trash-btn"
                       >
-                        {deletingEmails ? 'Trashing...' : `Confirm Trash (${trashEmails.length})`}
+                        {deletingEmails ? 'Trashing...' : `Trash All (${trashEmails.length})`}
                       </button>
                     )}
                   </div>
@@ -1197,11 +1288,18 @@ function DriveSearch() {
               </>
             )}
 
+            {selectedTrashLabel && (
+              <div className="list-filter-header">
+                Viewing staged: <strong>{selectedTrashLabel}</strong> ({listEmails.length})
+                <button className="clear-filter-btn" onClick={() => setSelectedTrashLabel(null)}>× Clear</button>
+              </div>
+            )}
+
             <div className="email-list">
-              {filteredEmails.map((email, index) => (
+              {listEmails.map((email, index) => (
                 <div
                   key={email.id}
-                  className="email-item clickable"
+                  className={`email-item clickable${selectedTrashLabel ? ' staged-item' : ''}`}
                   onClick={() => openEmailModal(email)}
                 >
                   <div className="email-index">{index + 1}.</div>

@@ -589,6 +589,110 @@
   letter-spacing: 0.05em;
 }
 
+/* ── Trash domain pills (grouped) ── */
+
+.trash-domain-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid #ff5e5e44;
+  background: rgba(255, 94, 94, 0.08);
+  color: #ccc;
+  transition: border-color 0.2s, background 0.2s;
+  user-select: none;
+}
+
+.trash-domain-pill:hover {
+  border-color: #ff5e5e;
+  background: rgba(255, 94, 94, 0.15);
+}
+
+.trash-domain-pill.selected {
+  border-color: #7c6fff;
+  background: rgba(124, 111, 255, 0.15);
+  box-shadow: 0 0 8px rgba(124, 111, 255, 0.3);
+}
+
+.pill-action-btn {
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.pill-action-btn:hover {
+  opacity: 0.75;
+}
+
+.pill-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.export-action {
+  background: rgba(96, 165, 250, 0.25);
+  color: #60a5fa;
+}
+
+.trash-action {
+  background: rgba(255, 94, 94, 0.25);
+  color: #ff5e5e;
+}
+
+.undo-action {
+  background: rgba(74, 222, 128, 0.25);
+  color: #4ade80;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+/* ── List filter header ── */
+
+.list-filter-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  background: rgba(124, 111, 255, 0.1);
+  border: 1px solid rgba(124, 111, 255, 0.3);
+  border-radius: 8px;
+  font-size: 13px;
+  color: #aaa;
+}
+
+.list-filter-header strong {
+  color: #7c6fff;
+}
+
+.clear-filter-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.1);
+  color: #aaa;
+  margin-left: auto;
+}
+
+.clear-filter-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.email-item.staged-item {
+  border-left: 3px solid #7c6fff;
+}
+
 .confirm-trash-btn {
   margin-top: 12px;
   width: 100%;
