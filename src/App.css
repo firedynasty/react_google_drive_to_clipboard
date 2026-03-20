@@ -401,6 +401,217 @@
   cursor: not-allowed;
 }
 
+/* ── Email Pill Drag-and-Drop Boards ── */
+
+.email-pill-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.move-all-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid #333;
+  border-radius: 8px;
+  cursor: pointer;
+  background: #1a1a2e;
+  color: #eee;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.move-all-btn:hover {
+  border-color: #7c6fff;
+  background: #22222e;
+}
+
+.move-all-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.move-all-btn.to-trash {
+  border-color: #ff5e5e44;
+}
+
+.move-all-btn.to-keep {
+  border-color: #4ade8044;
+}
+
+.export-btn {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1.5px solid #60a5fa44;
+  border-radius: 8px;
+  cursor: pointer;
+  background: #1a1a2e;
+  color: #60a5fa;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.export-btn:hover {
+  border-color: #60a5fa;
+  background: #22222e;
+}
+
+.export-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.email-boards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 600px) {
+  .email-boards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.email-board {
+  background: #16213e;
+  border: 1.5px solid #2e2e3e;
+  border-radius: 12px;
+  padding: 14px;
+  min-height: 180px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.email-board.drag-over-target {
+  border-color: #7c6fff;
+  background: #1e1e2e;
+}
+
+.board-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #888;
+  margin-bottom: 12px;
+}
+
+.board-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.keep-dot {
+  background: #4ade80;
+  box-shadow: 0 0 6px #4ade80;
+}
+
+.trash-dot {
+  background: #ff5e5e;
+  box-shadow: 0 0 6px #ff5e5e;
+}
+
+.pill-zone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 40px;
+}
+
+.email-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: grab;
+  user-select: none;
+  border: 1.5px solid #4ade8044;
+  background: rgba(74, 222, 128, 0.1);
+  color: #ccc;
+  transition: opacity 0.2s, transform 0.15s;
+}
+
+.email-pill:hover {
+  transform: translateY(-1px);
+  border-color: #4ade80;
+}
+
+.email-pill:active {
+  cursor: grabbing;
+}
+
+.email-pill.dragging {
+  opacity: 0.35;
+  transform: scale(0.95);
+}
+
+.email-pill.trash-pill {
+  border-color: #ff5e5e44;
+  background: rgba(255, 94, 94, 0.1);
+  filter: saturate(0.4) brightness(0.75);
+}
+
+.email-pill.trash-pill:hover {
+  border-color: #ff5e5e;
+  filter: none;
+}
+
+.pill-label-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #aaa;
+  white-space: nowrap;
+}
+
+.pill-subject {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+.empty-hint {
+  color: #555;
+  font-size: 12px;
+  letter-spacing: 0.05em;
+}
+
+.confirm-trash-btn {
+  margin-top: 12px;
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: #dc3545;
+  color: white;
+  transition: background 0.2s;
+}
+
+.confirm-trash-btn:hover {
+  background: #c82333;
+}
+
+.confirm-trash-btn:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
 .calendar-section {
   margin-top: 30px;
   padding-top: 20px;

@@ -112,6 +112,8 @@ function DriveSearch() {
   const [copyCellIndex, setCopyCellIndex] = useState(2);
   const [selectedRow, setSelectedRow] = useState(null);
   const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
+  const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
+  const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
 
   useEffect(() => {
     const initClient = () => {
@@ -714,6 +716,98 @@ function DriveSearch() {
     }
   };
 
+  // Drag-and-drop email pill handlers
+  const handleEmailDragStart = (emailId) => {
+    setDraggedEmail(emailId);
+  };
+
+  const handleEmailDragEnd = () => {
+    setDraggedEmail(null);
+  };
+
+  const handleDropToTrash = (e) => {
+    e.preventDefault();
+    if (!draggedEmail) return;
+    const email = emails.find(em => em.id === draggedEmail);
+    if (email && !trashEmails.find(em => em.id === draggedEmail)) {
+      setTrashEmails(prev => [...prev, email]);
+      setEmails(prev => prev.filter(em => em.id !== draggedEmail));
+    }
+    setDraggedEmail(null);
+  };
+
+  const handleDropToKeep = (e) => {
+    e.preventDefault();
+    if (!draggedEmail) return;
+    const email = trashEmails.find(em => em.id === draggedEmail);
+    if (email && !emails.find(em => em.id === draggedEmail)) {
+      setEmails(prev => [...prev, email]);
+      setTrashEmails(prev => prev.filter(em => em.id !== draggedEmail));
+    }
+    setDraggedEmail(null);
+  };
+
+  const handleBoardDragOver = (e) => {
+    e.preventDefault();
+  };
+
+  const moveAllToTrash = () => {
+    setTrashEmails(prev => [...prev, ...filteredEmails]);
+    setEmails(prev => prev.filter(em => !filteredEmails.find(fe => fe.id === em.id)));
+  };
+
+  const moveAllToKeep = () => {
+    setEmails(prev => [...prev, ...trashEmails]);
+    setTrashEmails([]);
+  };
+
+  // Confirm trash: actually trash emails in the trash board via Gmail API
+  const confirmTrashEmails = async () => {
+    if (!accessToken || trashEmails.length === 0) return;
+    setDeletingEmails(true);
+    setStatus(`Trashing ${trashEmails.length} emails...`);
+    try {
+      const ids = trashEmails.map(e => e.id);
+      for (let i = 0; i < ids.length; i += 1000) {
+        const chunk = ids.slice(i, i + 1000);
+        await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/batchModify', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ids: chunk, addLabelIds: ['TRASH'], removeLabelIds: ['INBOX'] }),
+        });
+      }
+      setStatus(`Trashed ${trashEmails.length} emails`);
+      setTrashEmails([]);
+    } catch (error) {
+      setStatus('Error trashing: ' + error.message);
+    } finally {
+      setDeletingEmails(false);
+    }
+  };
+
+  // Export keep-board emails to clipboard (subject + snippet)
+  const exportKeepEmails = () => {
+    const text = filteredEmails.map((e, i) =>
+      `--- Email ${i + 1} ---\nSubject: ${e.subject}\nFrom: ${e.from}\nDate: ${e.date}\nContent: ${e.snippet || '(no preview)'}`
+    ).join('\n\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setStatus(`Copied ${filteredEmails.length} emails to clipboard`);
+    });
+  };
+
+  // Export trash-board emails to clipboard
+  const exportTrashEmails = () => {
+    const text = trashEmails.map((e, i) =>
+      `--- Email ${i + 1} ---\nSubject: ${e.subject}\nFrom: ${e.from}\nDate: ${e.date}\nContent: ${e.snippet || '(no preview)'}`
+    ).join('\n\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setStatus(`Copied ${trashEmails.length} trash emails to clipboard`);
+    });
+  };
+
   // Search all emails from a specific sender address
   const searchBySender = async () => {
     if (!accessToken || !senderSearch.trim()) return;
@@ -1074,34 +1168,91 @@ function DriveSearch() {
                     </option>
                   ))}
                 </select>
-                {selectedLabel !== 'All' && (
-                  <button
-                    onClick={deleteFilteredEmails}
-                    disabled={deletingEmails}
-                    className="delete-emails-btn"
-                  >
-                    {deletingEmails ? 'Deleting...' : `Delete (${filteredEmails.length})`}
-                  </button>
-                )}
               </div>
             )}
 
-            <div className="email-list">
-              {filteredEmails.map((email, index) => (
-                <div
-                  key={email.id}
-                  className="email-item clickable"
-                  onClick={() => openEmailModal(email)}
-                >
-                  <div className="email-index">{index + 1}.</div>
-                  <div className="email-content">
-                    <div className="email-subject">{email.subject}</div>
-                    <div className="email-from">From: {email.from}</div>
-                    <div className="email-label">Label: {email.label}</div>
-                    <div className="email-date">Date: {email.date}</div>
-                  </div>
+            {(emails.length > 0 || trashEmails.length > 0) && (
+              <div className="email-pill-controls">
+                <button onClick={moveAllToTrash} className="move-all-btn to-trash" disabled={filteredEmails.length === 0}>
+                  All → Trash ({filteredEmails.length})
+                </button>
+                <button onClick={moveAllToKeep} className="move-all-btn to-keep" disabled={trashEmails.length === 0}>
+                  All → Keep ({trashEmails.length})
+                </button>
+                <button onClick={exportKeepEmails} className="export-btn" disabled={filteredEmails.length === 0}>
+                  Export Keep ({filteredEmails.length})
+                </button>
+                <button onClick={exportTrashEmails} className="export-btn" disabled={trashEmails.length === 0}>
+                  Export Trash ({trashEmails.length})
+                </button>
+              </div>
+            )}
+
+            <div className="email-boards">
+              <div
+                className={`email-board keep-board${draggedEmail && trashEmails.find(e => e.id === draggedEmail) ? ' drag-over-target' : ''}`}
+                onDragOver={handleBoardDragOver}
+                onDrop={handleDropToKeep}
+              >
+                <div className="board-header">
+                  <span className="board-dot keep-dot"></span>
+                  <span>Keep ({filteredEmails.length})</span>
                 </div>
-              ))}
+                <div className="pill-zone">
+                  {filteredEmails.map((email) => (
+                    <div
+                      key={email.id}
+                      className={`email-pill${draggedEmail === email.id ? ' dragging' : ''}`}
+                      draggable
+                      onDragStart={() => handleEmailDragStart(email.id)}
+                      onDragEnd={handleEmailDragEnd}
+                      onClick={() => openEmailModal(email)}
+                      title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
+                    >
+                      <span className="pill-label-tag">{email.label}</span>
+                      <span className="pill-subject">{email.subject.length > 35 ? email.subject.substring(0, 32) + '...' : email.subject}</span>
+                    </div>
+                  ))}
+                  {filteredEmails.length === 0 && <span className="empty-hint">Drop emails here to keep</span>}
+                </div>
+              </div>
+
+              <div
+                className={`email-board trash-board${draggedEmail && emails.find(e => e.id === draggedEmail) ? ' drag-over-target' : ''}`}
+                onDragOver={handleBoardDragOver}
+                onDrop={handleDropToTrash}
+              >
+                <div className="board-header">
+                  <span className="board-dot trash-dot"></span>
+                  <span>Trash ({trashEmails.length})</span>
+                </div>
+                <div className="pill-zone">
+                  {trashEmails.map((email) => (
+                    <div
+                      key={email.id}
+                      className={`email-pill trash-pill${draggedEmail === email.id ? ' dragging' : ''}`}
+                      draggable
+                      onDragStart={() => handleEmailDragStart(email.id)}
+                      onDragEnd={handleEmailDragEnd}
+                      onClick={() => openEmailModal(email)}
+                      title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
+                    >
+                      <span className="pill-label-tag">{email.label}</span>
+                      <span className="pill-subject">{email.subject.length > 35 ? email.subject.substring(0, 32) + '...' : email.subject}</span>
+                    </div>
+                  ))}
+                  {trashEmails.length === 0 && <span className="empty-hint">Drag emails here to trash</span>}
+                </div>
+                {trashEmails.length > 0 && (
+                  <button
+                    onClick={confirmTrashEmails}
+                    disabled={deletingEmails}
+                    className="confirm-trash-btn"
+                  >
+                    {deletingEmails ? 'Trashing...' : `Confirm Trash (${trashEmails.length})`}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
