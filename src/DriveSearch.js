@@ -95,7 +95,7 @@ function DriveSearch() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
-  const [emailModal, setEmailModal] = useState({ open: false, email: null, body: '', loading: false });
+  const [emailModal, setEmailModal] = useState({ open: false, email: null, body: '', loading: false, fromPillLabel: null });
   const [gmailLabels, setGmailLabels] = useState([]);
   const [selectedGmailLabel, setSelectedGmailLabel] = useState('');
   const [applyingLabel, setApplyingLabel] = useState(false);
@@ -403,8 +403,8 @@ function DriveSearch() {
   }, [emailModal.open, keepPillModal.open]);
 
   // Open email modal and fetch body
-  const openEmailModal = async (email) => {
-    setEmailModal({ open: true, email, body: '', loading: true });
+  const openEmailModal = async (email, fromPillLabel = null) => {
+    setEmailModal({ open: true, email, body: '', loading: true, fromPillLabel });
     setSelectedGmailLabel('');
 
     try {
@@ -1480,6 +1480,21 @@ function DriveSearch() {
                 <div className="email-modal-header">
                   <h3>{keepPillModal.label} ({filteredEmails.filter(e => e.label === keepPillModal.label).length})</h3>
                   <div className="modal-header-controls">
+                    <label className="pill-select-all-label">
+                      <input
+                        type="checkbox"
+                        checked={filteredEmails.filter(e => e.label === keepPillModal.label).every(e => pillDeleteMap[e.id] === 'y')}
+                        onChange={(ev) => {
+                          const domainEmails = filteredEmails.filter(e => e.label === keepPillModal.label);
+                          const val = ev.target.checked ? 'y' : 'n';
+                          const newMap = { ...pillDeleteMap };
+                          domainEmails.forEach(e => { newMap[e.id] = val; });
+                          setPillDeleteMap(newMap);
+                        }}
+                        title="Select all for trash"
+                      />
+                      d:y all
+                    </label>
                     <button
                       className="pill-trash-btn"
                       onClick={trashPillMarkedEmails}
@@ -1499,8 +1514,9 @@ function DriveSearch() {
                         key={email.id}
                         className="email-item clickable"
                         onClick={() => {
+                          const label = keepPillModal.label;
                           setKeepPillModal({ open: false, label: null });
-                          openEmailModal(email);
+                          openEmailModal(email, label);
                         }}
                       >
                         <div className="email-index">{index + 1}.</div>
@@ -1542,6 +1558,16 @@ function DriveSearch() {
             <div className="email-modal-overlay" onClick={() => setEmailModal({ ...emailModal, open: false })}>
               <div className="email-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="email-modal-header">
+                  {emailModal.fromPillLabel && (
+                    <button
+                      className="email-modal-back"
+                      onClick={() => {
+                        setEmailModal({ ...emailModal, open: false, fromPillLabel: null });
+                        setKeepPillModal({ open: true, label: emailModal.fromPillLabel });
+                      }}
+                      title="Back to email list"
+                    >←</button>
+                  )}
                   <h3>{emailModal.email?.subject}</h3>
                   <div className="modal-header-controls">
                     <button
