@@ -116,6 +116,8 @@ function DriveSearch() {
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
   const [selectedTrashLabel, setSelectedTrashLabel] = useState(null); // clicked pill in right board filters list
   const [keepPillModal, setKeepPillModal] = useState({ open: false, label: null }); // keep domain pill modal
+  const [emailFormatted, setEmailFormatted] = useState(false); // TXT>MD toggle
+  const [emailFontSize, setEmailFontSize] = useState(14); // modal font size
 
   useEffect(() => {
     const initClient = () => {
@@ -842,6 +844,44 @@ function DriveSearch() {
     return filteredEmails;
   }, [selectedTrashLabel, trashEmails, filteredEmails]);
 
+  // Format plain-text email body into readable HTML
+  const formatEmailBody = (text) => {
+    if (!text) return '';
+    let s = text;
+
+    // Strip zero-width/invisible chars
+    s = s.replace(/[\u200C\u200B\u00AD\uFEFF]/g, '');
+
+    // Escape HTML
+    s = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    // Restore angle-bracket URLs to clickable links: &lt;https://...&gt;
+    s = s.replace(/&lt;(https?:\/\/[^&\s]+)&gt;/g, (_, url) =>
+      `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;word-break:break-all;">${url}</a>`
+    );
+
+    // mailto links
+    s = s.replace(/&lt;(mailto:[^&\s]+)&gt;/g, (_, url) =>
+      `<a href="${url}" style="color:#60a5fa;">${url.replace('mailto:', '')}</a>`
+    );
+
+    // Lines starting with * → bullet list items
+    s = s.replace(/^\s*\*\s+(.+)$/gm, '<li>$1</li>');
+    s = s.replace(/(<li>.*<\/li>\n?)+/gs, (match) => `<ul style="margin:8px 0 8px 20px;line-height:1.7;">${match}</ul>`);
+
+    // Lines that look like section headers (ALL CAPS or end with colon alone on line)
+    s = s.replace(/^([A-Z][A-Z\s\d,&'"-]{10,})$/gm,
+      '<h4 style="color:#00d4ff;margin:16px 0 6px;font-size:1em;">$1</h4>');
+
+    // Blank lines → paragraph breaks
+    s = s.replace(/\n{2,}/g, '</p><p style="margin:10px 0;">');
+
+    // Single newlines → <br>
+    s = s.replace(/\n/g, '<br>');
+
+    return `<p style="margin:10px 0;">${s}</p>`;
+  };
+
   // Search all emails from a specific sender address
   const searchBySender = async () => {
     if (!accessToken || !senderSearch.trim()) return;
@@ -1414,22 +1454,43 @@ function DriveSearch() {
               <div className="email-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="email-modal-header">
                   <h3>{emailModal.email?.subject}</h3>
-                  <button
-                    className="modal-close-btn"
-                    onClick={() => setEmailModal({ ...emailModal, open: false })}
-                  >
-                    ×
-                  </button>
+                  <div className="modal-header-controls">
+                    <button
+                      className="font-size-btn"
+                      onClick={() => setEmailFontSize(s => Math.max(10, s - 1))}
+                      title="Decrease font size"
+                    >−</button>
+                    <span className="font-size-label">{emailFontSize}px</span>
+                    <button
+                      className="font-size-btn"
+                      onClick={() => setEmailFontSize(s => Math.min(24, s + 1))}
+                      title="Increase font size"
+                    >+</button>
+                    <button
+                      className={`txt-md-toggle-btn${emailFormatted ? ' active' : ''}`}
+                      onClick={() => setEmailFormatted(f => !f)}
+                      title="Toggle formatted view"
+                    >TXT&gt;MD</button>
+                    <button
+                      className="modal-close-btn"
+                      onClick={() => setEmailModal({ ...emailModal, open: false })}
+                    >×</button>
+                  </div>
                 </div>
                 <div className="email-modal-meta">
                   <div>From: {emailModal.email?.from}</div>
                   <div>Date: {emailModal.email?.date}</div>
                 </div>
-                <div className="email-modal-body">
+                <div className="email-modal-body" style={{ fontSize: `${emailFontSize}px` }}>
                   {emailModal.loading ? (
                     <div className="loading">Loading email...</div>
+                  ) : emailFormatted ? (
+                    <div
+                      className="email-formatted"
+                      dangerouslySetInnerHTML={{ __html: formatEmailBody(emailModal.body) }}
+                    />
                   ) : (
-                    <pre>{emailModal.body}</pre>
+                    <pre style={{ fontSize: `${emailFontSize}px` }}>{emailModal.body}</pre>
                   )}
                 </div>
                 <div className="email-modal-actions">
