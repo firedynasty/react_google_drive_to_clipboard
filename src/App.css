@@ -555,6 +555,32 @@
   transform: scale(0.95);
 }
 
+.email-pill.keep-domain-pill {
+  cursor: pointer;
+}
+
+.email-pill.keep-domain-pill:hover {
+  border-color: #4ade80;
+  background: rgba(74, 222, 128, 0.18);
+}
+
+/* Keep pill modal — wider, scrollable, same style as email-list */
+.keep-pill-modal {
+  max-width: 600px;
+  width: 90%;
+  max-height: 75vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.keep-pill-modal-body {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
 .email-pill.trash-pill {
   border-color: #ff5e5e44;
   background: rgba(255, 94, 94, 0.1);

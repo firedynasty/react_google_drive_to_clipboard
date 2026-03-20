@@ -115,6 +115,7 @@ function DriveSearch() {
   const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
   const [selectedTrashLabel, setSelectedTrashLabel] = useState(null); // clicked pill in right board filters list
+  const [keepPillModal, setKeepPillModal] = useState({ open: false, label: null }); // keep domain pill modal
 
   useEffect(() => {
     const initClient = () => {
@@ -692,6 +693,7 @@ function DriveSearch() {
     if (email && !trashEmails.find(em => em.id === draggedEmail)) {
       setTrashEmails(prev => [...prev, email]);
       setEmails(prev => prev.filter(em => em.id !== draggedEmail));
+      setSelectedTrashLabel(email.label); // auto-filter list to this domain
     }
     setDraggedEmail(null);
   };
@@ -1214,17 +1216,21 @@ function DriveSearch() {
                       <span>Keep ({filteredEmails.length})</span>
                     </div>
                     <div className="pill-zone">
-                      {filteredEmails.map((email) => (
+                      {sortedLabels.map((label) => (
                         <div
-                          key={email.id}
-                          className={`email-pill${draggedEmail === email.id ? ' dragging' : ''}`}
+                          key={label}
+                          className="email-pill keep-domain-pill"
                           draggable
-                          onDragStart={() => handleEmailDragStart(email.id)}
+                          onDragStart={() => {
+                            // drag the first email of this domain
+                            const first = filteredEmails.find(e => e.label === label);
+                            if (first) handleEmailDragStart(first.id);
+                          }}
                           onDragEnd={handleEmailDragEnd}
-                          onClick={() => openEmailModal(email)}
-                          title={`${email.subject}\nFrom: ${email.from}\n${email.date}`}
+                          onClick={() => setKeepPillModal({ open: true, label })}
+                          title={`Click to view ${labelCounts[label]} email(s) from ${label}`}
                         >
-                          <span className="pill-label-tag">{email.label}</span>
+                          <span className="pill-label-tag">{label} ({labelCounts[label]})</span>
                         </div>
                       ))}
                       {filteredEmails.length === 0 && <span className="empty-hint">Drop emails here to keep</span>}
@@ -1360,6 +1366,43 @@ function DriveSearch() {
                       {name}
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Keep Domain Pill Modal */}
+          {keepPillModal.open && (
+            <div className="email-modal-overlay" onClick={() => setKeepPillModal({ open: false, label: null })}>
+              <div className="email-modal keep-pill-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="email-modal-header">
+                  <h3>{keepPillModal.label} ({filteredEmails.filter(e => e.label === keepPillModal.label).length})</h3>
+                  <button
+                    className="email-modal-close"
+                    onClick={() => setKeepPillModal({ open: false, label: null })}
+                  >✕</button>
+                </div>
+                <div className="email-modal-body keep-pill-modal-body">
+                  {filteredEmails
+                    .filter(e => e.label === keepPillModal.label)
+                    .map((email, index) => (
+                      <div
+                        key={email.id}
+                        className="email-item clickable"
+                        onClick={() => {
+                          setKeepPillModal({ open: false, label: null });
+                          openEmailModal(email);
+                        }}
+                      >
+                        <div className="email-index">{index + 1}.</div>
+                        <div className="email-content">
+                          <div className="email-subject">{email.subject}</div>
+                          <div className="email-from">From: {email.from}</div>
+                          <div className="email-date">Date: {email.date}</div>
+                        </div>
+                      </div>
+                    ))
+                  }
                 </div>
               </div>
             </div>
