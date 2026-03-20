@@ -581,6 +581,64 @@
   padding: 4px 0;
 }
 
+.pill-delete-radio {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.pill-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #666;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+
+.pill-radio-label input[type="radio"] {
+  accent-color: #555;
+  cursor: pointer;
+}
+
+.pill-radio-label.active-y {
+  color: #ff6b6b;
+}
+
+.pill-radio-label.active-y input[type="radio"] {
+  accent-color: #ff6b6b;
+}
+
+.pill-radio-label.active-n {
+  color: #6bffb8;
+}
+
+.pill-radio-label.active-n input[type="radio"] {
+  accent-color: #6bffb8;
+}
+
+.pill-trash-btn {
+  background: none;
+  border: 1px solid #555;
+  color: #aaa;
+  font-size: 14px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.pill-trash-btn:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
 .email-pill.trash-pill {
   border-color: #ff5e5e44;
   background: rgba(255, 94, 94, 0.1);

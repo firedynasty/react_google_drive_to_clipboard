@@ -116,6 +116,7 @@ function DriveSearch() {
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
   const [selectedTrashLabel, setSelectedTrashLabel] = useState(null); // clicked pill in right board filters list
   const [keepPillModal, setKeepPillModal] = useState({ open: false, label: null }); // keep domain pill modal
+  const [pillDeleteMap, setPillDeleteMap] = useState({}); // emailId -> 'y'|'n' for pill modal trash selection
   const [emailFormatted, setEmailFormatted] = useState(false); // TXT>MD toggle
   const [emailFontSize, setEmailFontSize] = useState(14); // modal font size
 
@@ -386,6 +387,20 @@ function DriveSearch() {
       fetchGmailLabels();
     }
   }, [accessToken, fetchGmailLabels]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        if (emailModal.open) {
+          setEmailModal(prev => ({ ...prev, open: false }));
+        } else if (keepPillModal.open) {
+          setKeepPillModal({ open: false, label: null });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [emailModal.open, keepPillModal.open]);
 
   // Open email modal and fetch body
   const openEmailModal = async (email) => {
@@ -720,6 +735,13 @@ function DriveSearch() {
     setEmails(prev => prev.filter(em => !filteredEmails.find(fe => fe.id === em.id)));
   };
 
+  const moveDomainToStaging = (label) => {
+    const domainEmails = filteredEmails.filter(e => e.label === label);
+    setTrashEmails(prev => [...prev, ...domainEmails]);
+    setEmails(prev => prev.filter(e => e.label !== label));
+    setSelectedTrashLabel(label);
+  };
+
   const moveAllToKeep = () => {
     setEmails(prev => [...prev, ...trashEmails]);
     setTrashEmails([]);
@@ -819,6 +841,36 @@ function DriveSearch() {
     setEmails(prev => [...prev, ...domainEmails]);
     setTrashEmails(prev => prev.filter(e => e.label !== label));
     if (selectedTrashLabel === label) setSelectedTrashLabel(null);
+  };
+
+  // Trash emails marked d:y in the keep-pill modal
+  const trashPillMarkedEmails = async () => {
+    const toTrash = filteredEmails.filter(
+      e => e.label === keepPillModal.label && pillDeleteMap[e.id] === 'y'
+    );
+    if (toTrash.length === 0) return;
+    if (!accessToken) return;
+    setStatus(`Trashing ${toTrash.length} emails...`);
+    try {
+      const ids = toTrash.map(e => e.id);
+      for (let i = 0; i < ids.length; i += 1000) {
+        const chunk = ids.slice(i, i + 1000);
+        await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/batchModify', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ids: chunk, addLabelIds: ['TRASH'], removeLabelIds: ['INBOX'] }),
+        });
+      }
+      setEmails(prev => prev.filter(e => !ids.includes(e.id)));
+      setStatus(`Trashed ${toTrash.length} emails`);
+      setKeepPillModal({ open: false, label: null });
+      setPillDeleteMap({});
+    } catch (error) {
+      setStatus('Error trashing: ' + error.message);
+    }
   };
 
   // Unique domain labels in trash board with counts
@@ -1267,8 +1319,18 @@ function DriveSearch() {
                             if (first) handleEmailDragStart(first.id);
                           }}
                           onDragEnd={handleEmailDragEnd}
-                          onClick={() => setKeepPillModal({ open: true, label })}
-                          title={`Click to view ${labelCounts[label]} email(s) from ${label}`}
+                          onClick={(e) => {
+                            if (e.shiftKey) {
+                              moveDomainToStaging(label);
+                              return;
+                            }
+                            const domainEmails = filteredEmails.filter(e => e.label === label);
+                            const initMap = {};
+                            domainEmails.forEach(e => { initMap[e.id] = 'n'; });
+                            setPillDeleteMap(initMap);
+                            setKeepPillModal({ open: true, label });
+                          }}
+                          title={`Click to view • Shift+Click to move all to staging`}
                         >
                           <span className="pill-label-tag">{label} ({labelCounts[label]})</span>
                         </div>
@@ -1417,10 +1479,17 @@ function DriveSearch() {
               <div className="email-modal keep-pill-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="email-modal-header">
                   <h3>{keepPillModal.label} ({filteredEmails.filter(e => e.label === keepPillModal.label).length})</h3>
-                  <button
-                    className="email-modal-close"
-                    onClick={() => setKeepPillModal({ open: false, label: null })}
-                  >✕</button>
+                  <div className="modal-header-controls">
+                    <button
+                      className="pill-trash-btn"
+                      onClick={trashPillMarkedEmails}
+                      title={`Trash all d:y emails`}
+                    >🗑</button>
+                    <button
+                      className="email-modal-close"
+                      onClick={() => setKeepPillModal({ open: false, label: null })}
+                    >✕</button>
+                  </div>
                 </div>
                 <div className="email-modal-body keep-pill-modal-body">
                   {filteredEmails
@@ -1439,6 +1508,26 @@ function DriveSearch() {
                           <div className="email-subject">{email.subject}</div>
                           <div className="email-from">From: {email.from}</div>
                           <div className="email-date">Date: {email.date}</div>
+                        </div>
+                        <div className="pill-delete-radio" onClick={(e) => e.stopPropagation()}>
+                          <label className={`pill-radio-label${pillDeleteMap[email.id] === 'y' ? ' active-y' : ''}`}>
+                            <input
+                              type="radio"
+                              name={`del-${email.id}`}
+                              value="y"
+                              checked={pillDeleteMap[email.id] === 'y'}
+                              onChange={() => setPillDeleteMap(prev => ({ ...prev, [email.id]: 'y' }))}
+                            /> d:y
+                          </label>
+                          <label className={`pill-radio-label${pillDeleteMap[email.id] === 'n' ? ' active-n' : ''}`}>
+                            <input
+                              type="radio"
+                              name={`del-${email.id}`}
+                              value="n"
+                              checked={pillDeleteMap[email.id] === 'n'}
+                              onChange={() => setPillDeleteMap(prev => ({ ...prev, [email.id]: 'n' }))}
+                            /> d:n
+                          </label>
                         </div>
                       </div>
                     ))
