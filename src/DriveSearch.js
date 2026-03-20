@@ -675,47 +675,6 @@ function DriveSearch() {
     setSelectedLabel(allOptions[nextIndex]);
   }, [sortedLabels, selectedLabel]);
 
-  // Delete (trash) all filtered emails
-  const deleteFilteredEmails = async () => {
-    if (!accessToken || filteredEmails.length === 0 || selectedLabel === 'All') return;
-
-    const confirmDelete = window.confirm(
-      `Are you sure you want to trash ${filteredEmails.length} email(s) from "${selectedLabel}"?`
-    );
-    if (!confirmDelete) return;
-
-    setDeletingEmails(true);
-    setStatus(`Trashing ${filteredEmails.length} emails...`);
-
-    try {
-      // Trash each email
-      const results = await Promise.all(
-        filteredEmails.map(async (email) => {
-          const response = await fetch(
-            `https://www.googleapis.com/gmail/v1/users/me/messages/${email.id}/trash`,
-            {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${accessToken}` },
-            }
-          );
-          return response.ok;
-        })
-      );
-
-      const successCount = results.filter(Boolean).length;
-
-      // Remove trashed emails from local state
-      const trashedIds = new Set(filteredEmails.map((e) => e.id));
-      setEmails((prev) => prev.filter((e) => !trashedIds.has(e.id)));
-      setSelectedLabel('All');
-      setStatus(`Trashed ${successCount} of ${filteredEmails.length} emails`);
-    } catch (error) {
-      setStatus('Error trashing emails: ' + error.message);
-    } finally {
-      setDeletingEmails(false);
-    }
-  };
-
   // Drag-and-drop email pill handlers
   const handleEmailDragStart = (emailId) => {
     setDraggedEmail(emailId);
