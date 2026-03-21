@@ -392,7 +392,7 @@ function DriveSearch() {
   }, [accessToken, fetchGmailLabels]);
 
   // Trash a single email via Gmail API
-  const trashSingleEmail = async (email) => {
+  const trashSingleEmail = useCallback(async (email) => {
     if (!accessToken || !email) return;
     try {
       const response = await fetch(
@@ -414,7 +414,7 @@ function DriveSearch() {
     } catch (err) {
       setStatus(`Error trashing email: ${err.message}`);
     }
-  };
+  }, [accessToken]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -432,7 +432,7 @@ function DriveSearch() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [emailModal.open, emailModal.email, keepPillModal.open]);
+  }, [emailModal.open, emailModal.email, keepPillModal.open, trashSingleEmail]);
 
   // Open email modal and fetch body
   const openEmailModal = async (email, fromPillLabel = null) => {
