@@ -114,6 +114,9 @@ function DriveSearch() {
   const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
   const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
+  const dragStartXRef = React.useRef(null); // X position when drag started
+  const dragStartTimeRef = React.useRef(null); // timestamp when drag started
+  const dragFlickedRef = React.useRef(false); // prevent double-trigger on flick
   const [selectedTrashLabel, setSelectedTrashLabel] = useState(null); // clicked pill in right board filters list
   const [keepPillModal, setKeepPillModal] = useState({ open: false, label: null }); // keep domain pill modal
   const [pillDeleteMap, setPillDeleteMap] = useState({}); // emailId -> 'y'|'n' for pill modal trash selection
@@ -695,12 +698,32 @@ function DriveSearch() {
   }, [sortedLabels, selectedLabel]);
 
   // Drag-and-drop email pill handlers
-  const handleEmailDragStart = (emailId) => {
+  const handleEmailDragStart = (emailId, e) => {
     setDraggedEmail(emailId);
+    dragStartXRef.current = e ? e.clientX : null;
+    dragStartTimeRef.current = Date.now();
+    dragFlickedRef.current = false;
   };
 
   const handleEmailDragEnd = () => {
     setDraggedEmail(null);
+    dragStartXRef.current = null;
+    dragStartTimeRef.current = null;
+    dragFlickedRef.current = false;
+  };
+
+  // Flick detection: quick rightward drag (>60px in <400ms) auto-moves the domain
+  const handleKeepPillDrag = (e, label) => {
+    if (dragFlickedRef.current || dragStartXRef.current === null) return;
+    // onDrag fires with clientX=0 when drag image is being created or at end
+    if (e.clientX === 0) return;
+    const dx = e.clientX - dragStartXRef.current;
+    const dt = Date.now() - dragStartTimeRef.current;
+    if (dx > 60 && dt < 400) {
+      dragFlickedRef.current = true;
+      moveDomainToStaging(label);
+      setDraggedEmail(null);
+    }
   };
 
   const handleDropToTrash = (e) => {
@@ -1313,11 +1336,12 @@ function DriveSearch() {
                           key={label}
                           className="email-pill keep-domain-pill"
                           draggable
-                          onDragStart={() => {
+                          onDragStart={(e) => {
                             // drag the first email of this domain
                             const first = filteredEmails.find(e => e.label === label);
-                            if (first) handleEmailDragStart(first.id);
+                            if (first) handleEmailDragStart(first.id, e);
                           }}
+                          onDrag={(e) => handleKeepPillDrag(e, label)}
                           onDragEnd={handleEmailDragEnd}
                           onClick={(e) => {
                             if (e.shiftKey) {
