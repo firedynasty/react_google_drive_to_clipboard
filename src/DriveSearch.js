@@ -922,6 +922,11 @@ function DriveSearch() {
   // Format plain-text email body into readable HTML
   const formatEmailBody = (text) => {
     if (!text) return '';
+
+    // Detect if body is already HTML (contains common HTML tags)
+    const isHtml = /<(table|div|tr|td|th|p|br|img|a|span|html|body|head|style)\b/i.test(text);
+    if (isHtml) return text;
+
     let s = text;
 
     // Strip zero-width/invisible chars
@@ -1582,16 +1587,6 @@ function DriveSearch() {
             <div className="email-modal-overlay" onClick={() => setEmailModal({ ...emailModal, open: false })}>
               <div className="email-modal" onClick={(e) => e.stopPropagation()}>
                 <div className="email-modal-header">
-                  {emailModal.fromPillLabel && (
-                    <button
-                      className="email-modal-back"
-                      onClick={() => {
-                        setEmailModal({ ...emailModal, open: false, fromPillLabel: null });
-                        setKeepPillModal({ open: true, label: emailModal.fromPillLabel });
-                      }}
-                      title="Back to email list"
-                    >←</button>
-                  )}
                   <h3>{emailModal.email?.subject}</h3>
                   <div className="modal-header-controls">
                     <button
@@ -1610,6 +1605,16 @@ function DriveSearch() {
                       onClick={() => setEmailFormatted(f => !f)}
                       title="Toggle formatted view"
                     >TXT&gt;MD</button>
+                    {emailModal.fromPillLabel && (
+                      <button
+                        className="email-modal-back"
+                        onClick={() => {
+                          setEmailModal({ ...emailModal, open: false, fromPillLabel: null });
+                          setKeepPillModal({ open: true, label: emailModal.fromPillLabel });
+                        }}
+                        title="Back to email list"
+                      >←</button>
+                    )}
                     <button
                       className="modal-close-btn"
                       onClick={() => setEmailModal({ ...emailModal, open: false })}
