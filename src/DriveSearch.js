@@ -391,6 +391,31 @@ function DriveSearch() {
     }
   }, [accessToken, fetchGmailLabels]);
 
+  // Trash a single email via Gmail API
+  const trashSingleEmail = async (email) => {
+    if (!accessToken || !email) return;
+    try {
+      const response = await fetch(
+        'https://www.googleapis.com/gmail/v1/users/me/messages/batchModify',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ ids: [email.id], addLabelIds: ['TRASH'], removeLabelIds: ['INBOX'] }),
+        }
+      );
+      if (!response.ok) throw new Error('Trash failed');
+      setEmails(prev => prev.filter(e => e.id !== email.id));
+      setTrashEmails(prev => prev.filter(e => e.id !== email.id));
+      setEmailModal(prev => ({ ...prev, open: false }));
+      setStatus(`Trashed: ${email.subject}`);
+    } catch (err) {
+      setStatus(`Error trashing email: ${err.message}`);
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
@@ -400,10 +425,14 @@ function DriveSearch() {
           setKeepPillModal({ open: false, label: null });
         }
       }
+      // # (Shift+3) trashes the currently open email
+      if (e.key === '#' && emailModal.open && emailModal.email) {
+        trashSingleEmail(emailModal.email);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [emailModal.open, keepPillModal.open]);
+  }, [emailModal.open, emailModal.email, keepPillModal.open]);
 
   // Open email modal and fetch body
   const openEmailModal = async (email, fromPillLabel = null) => {
@@ -1665,6 +1694,14 @@ function DriveSearch() {
                     className="copy-body-btn"
                   >
                     Copy Body
+                  </button>
+                  <button
+                    onClick={() => trashSingleEmail(emailModal.email)}
+                    className="copy-body-btn"
+                    style={{ background: '#dc3545' }}
+                    title="Trash this email (#)"
+                  >
+                    Delete
                   </button>
                 </div>
               </div>
