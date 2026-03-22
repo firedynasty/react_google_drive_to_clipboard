@@ -127,28 +127,6 @@ function DriveSearch() {
   const [emailFontSize, setEmailFontSize] = useState(14); // modal font size
   const tokenExpiryRef = React.useRef(null); // timestamp when current token expires
 
-  const getValidToken = React.useCallback(() => {
-    return new Promise((resolve, reject) => {
-      if (!tokenClient) return reject(new Error('Not signed in'));
-      const now = Date.now();
-      if (accessToken && tokenExpiryRef.current && now < tokenExpiryRef.current - 60000) {
-        // Token still valid (with 1-min buffer)
-        return resolve(accessToken);
-      }
-      // Token expired or missing — request a new one silently
-      tokenClient.callback = (response) => {
-        if (response.access_token) {
-          setAccessToken(response.access_token);
-          tokenExpiryRef.current = Date.now() + (response.expires_in || 3600) * 1000;
-          resolve(response.access_token);
-        } else {
-          reject(new Error('Failed to refresh token'));
-        }
-      };
-      tokenClient.requestAccessToken({ prompt: '' });
-    });
-  }, [accessToken, tokenClient]);
-
   useEffect(() => {
     const initClient = () => {
       if (window.google && window.google.accounts) {
