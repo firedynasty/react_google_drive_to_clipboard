@@ -331,14 +331,25 @@ function DriveSearch() {
     setSaving(true);
     setStatus(`Saving "${currentFileName}"...`);
 
+    // Log token info (first 20 chars only for safety)
+    console.log('[Save] accessToken present:', !!accessToken, accessToken?.substring(0, 20) + '...');
+    console.log('[Save] currentFileMimeType:', currentFileMimeType);
+    console.log('[Save] currentSheetName:', currentSheetName);
+    console.log('[Save] isEditMode:', isEditMode);
+
     try {
       const contentToSave = isEditMode ? editContent : fileContent;
+      console.log('[Save] contentToSave length:', contentToSave?.length, 'from:', isEditMode ? 'editContent' : 'fileContent');
 
       if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
         // Native Google Sheets: parse CSV back into rows and write via Sheets API
         const sheetName = currentSheetName || 'Sheet1';
 
-        console.log('Saving to sheet:', sheetName, 'fileId:', currentFileId);
+        console.log('[Save Sheets] mimeType:', currentFileMimeType);
+        console.log('[Save Sheets] fileId:', currentFileId);
+        console.log('[Save Sheets] sheetName:', sheetName);
+        console.log('[Save Sheets] contentToSave length:', contentToSave.length);
+        console.log('[Save Sheets] contentToSave preview:', contentToSave.substring(0, 200));
 
         // Parse the edited CSV text into a 2D array
         const rows = [];
@@ -349,39 +360,54 @@ function DriveSearch() {
           remaining = parsed.rest;
         }
 
+        console.log('[Save Sheets] parsed rows count:', rows.length);
+        console.log('[Save Sheets] first row:', rows[0]);
+        console.log('[Save Sheets] last row:', rows[rows.length - 1]);
+
         // Clear the sheet first, then write new values
         const encodedSheet = encodeURIComponent(sheetName);
-        const clearResp = await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}:clear`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }
-        );
-        if (!clearResp.ok) {
-          const errorData = await clearResp.json().catch(() => ({}));
-          throw new Error(errorData.error?.message || `Clear failed: HTTP ${clearResp.status}`);
-        }
+        const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}:clear`;
+        console.log('[Save Sheets] clearing:', clearUrl);
 
-        console.log('Parsed rows:', rows.length, 'first row:', rows[0]);
+        const clearResp = await fetch(clearUrl, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+
+        console.log('[Save Sheets] clear status:', clearResp.status);
+        if (!clearResp.ok) {
+          const errorText = await clearResp.text();
+          console.error('[Save Sheets] clear error body:', errorText);
+          let errorMsg;
+          try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+          throw new Error(errorMsg || `Clear failed: HTTP ${clearResp.status} — ${errorText.substring(0, 200)}`);
+        }
 
         // Write the new values
         if (rows.length > 0) {
-          const updateResp = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A1?valueInputOption=RAW`,
-            {
-              method: 'PUT',
-              headers: {
-                Authorization: `Bearer ${accessToken}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ values: rows }),
-            }
-          );
+          const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A1?valueInputOption=RAW`;
+          console.log('[Save Sheets] updating:', updateUrl);
+
+          const updateResp = await fetch(updateUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ values: rows }),
+          });
+
+          console.log('[Save Sheets] update status:', updateResp.status);
           if (!updateResp.ok) {
-            const errorData = await updateResp.json().catch(() => ({}));
-            throw new Error(errorData.error?.message || `Update failed: HTTP ${updateResp.status}`);
+            const errorText = await updateResp.text();
+            console.error('[Save Sheets] update error body:', errorText);
+            let errorMsg;
+            try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+            throw new Error(errorMsg || `Update failed: HTTP ${updateResp.status} — ${errorText.substring(0, 200)}`);
           }
+
+          const updateData = await updateResp.json();
+          console.log('[Save Sheets] update response:', updateData);
         }
       } else if (currentFileMimeType === 'application/vnd.google-apps.document') {
         // Native Google Docs: delete all content then insert new text via Docs API
