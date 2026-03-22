@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
 
 // Email label mapping: domain pattern -> friendly label name
 // Add your own mappings here! Partial matches work (e.g., 'newsletter' matches 'dailynewsletter.com')
@@ -330,28 +330,119 @@ function DriveSearch() {
     try {
       const contentToSave = isEditMode ? editContent : fileContent;
 
-      const response = await fetch(
-        `https://www.googleapis.com/upload/drive/v3/files/${currentFileId}?uploadType=media`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'text/plain',
-          },
-          body: contentToSave,
-        }
-      );
+      if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
+        // Native Google Sheets: parse CSV back into rows and write via Sheets API
+        // Extract sheet name from currentFileName if present (e.g. "File [Sheet1]")
+        const sheetMatch = currentFileName.match(/\[(.+)\]$/);
+        const sheetName = sheetMatch ? sheetMatch[1] : 'Sheet1';
 
-      // Check for success (200, 201, or any 2xx status)
-      if (response.status >= 200 && response.status < 300) {
-        // Update local state
-        setFileContent(contentToSave);
-        setIsEditMode(false);
-        setStatus(`Saved "${currentFileName}" successfully!`);
+        // Parse the edited CSV text into a 2D array
+        const rows = [];
+        let remaining = contentToSave.trim();
+        while (remaining.length > 0) {
+          const parsed = parseCsvRows(remaining);
+          rows.push(parsed.cells);
+          remaining = parsed.rest;
+        }
+
+        // Clear the sheet first, then write new values
+        const encodedSheet = encodeURIComponent(sheetName);
+        const clearResp = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}:clear`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+        if (!clearResp.ok) {
+          const errorData = await clearResp.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || `Clear failed: HTTP ${clearResp.status}`);
+        }
+
+        // Write the new values
+        if (rows.length > 0) {
+          const updateResp = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A1?valueInputOption=RAW`,
+            {
+              method: 'PUT',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ values: rows }),
+            }
+          );
+          if (!updateResp.ok) {
+            const errorData = await updateResp.json().catch(() => ({}));
+            throw new Error(errorData.error?.message || `Update failed: HTTP ${updateResp.status}`);
+          }
+        }
+      } else if (currentFileMimeType === 'application/vnd.google-apps.document') {
+        // Native Google Docs: delete all content then insert new text via Docs API
+        const docResp = await fetch(
+          `https://docs.googleapis.com/v1/documents/${currentFileId}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!docResp.ok) throw new Error('Failed to read Google Doc');
+        const doc = await docResp.json();
+
+        const requests = [];
+        const endIndex = doc.body.content[doc.body.content.length - 1].endIndex;
+        if (endIndex > 2) {
+          requests.push({
+            deleteContentRange: {
+              range: { startIndex: 1, endIndex: endIndex - 1 }
+            }
+          });
+        }
+        if (contentToSave) {
+          requests.push({
+            insertText: {
+              location: { index: 1 },
+              text: contentToSave
+            }
+          });
+        }
+
+        const updateResp = await fetch(
+          `https://docs.googleapis.com/v1/documents/${currentFileId}:batchUpdate`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ requests }),
+          }
+        );
+        if (!updateResp.ok) {
+          const errorData = await updateResp.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || `HTTP ${updateResp.status}`);
+        }
       } else {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+        // Regular files: upload via Drive API
+        const response = await fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${currentFileId}?uploadType=media`,
+          {
+            method: 'PATCH',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'text/plain',
+            },
+            body: contentToSave,
+          }
+        );
+
+        if (!(response.status >= 200 && response.status < 300)) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+        }
       }
+
+      // Update local state
+      setFileContent(contentToSave);
+      setIsEditMode(false);
+      setStatus(`Saved "${currentFileName}" successfully!`);
     } catch (error) {
       setStatus('Error saving: ' + error.message);
     } finally {
