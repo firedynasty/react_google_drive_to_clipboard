@@ -92,6 +92,7 @@ function DriveSearch() {
   const [currentFileName, setCurrentFileName] = useState('');
   const [currentFileId, setCurrentFileId] = useState('');
   const [currentFileMimeType, setCurrentFileMimeType] = useState('');
+  const [currentSheetName, setCurrentSheetName] = useState('');
   const [isEditMode, setIsEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
@@ -222,6 +223,7 @@ function DriveSearch() {
 
         if (workbook.SheetNames.length === 1) {
           content = XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+          setCurrentSheetName(workbook.SheetNames[0]);
         } else {
           setPendingWorkbook(workbook);
           setPendingFileName(fileName);
@@ -254,6 +256,7 @@ function DriveSearch() {
 
         if (workbook.SheetNames.length === 1) {
           content = XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+          setCurrentSheetName(workbook.SheetNames[0]);
           mimeType = 'application/vnd.google-apps.spreadsheet';
         } else {
           // Multiple sheets - show picker
@@ -300,6 +303,7 @@ function DriveSearch() {
     setFileContent(csv);
     setCurrentFileName(`${pendingFileName} [${sheetName}]`);
     setCurrentFileMimeType('application/vnd.google-apps.spreadsheet');
+    setCurrentSheetName(sheetName);
     setIsEditMode(false);
     setEditContent('');
     setSheetPickerOpen(false);
@@ -332,9 +336,9 @@ function DriveSearch() {
 
       if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
         // Native Google Sheets: parse CSV back into rows and write via Sheets API
-        // Extract sheet name from currentFileName if present (e.g. "File [Sheet1]")
-        const sheetMatch = currentFileName.match(/\[(.+)\]$/);
-        const sheetName = sheetMatch ? sheetMatch[1] : 'Sheet1';
+        const sheetName = currentSheetName || 'Sheet1';
+
+        console.log('Saving to sheet:', sheetName, 'fileId:', currentFileId);
 
         // Parse the edited CSV text into a 2D array
         const rows = [];
@@ -358,6 +362,8 @@ function DriveSearch() {
           const errorData = await clearResp.json().catch(() => ({}));
           throw new Error(errorData.error?.message || `Clear failed: HTTP ${clearResp.status}`);
         }
+
+        console.log('Parsed rows:', rows.length, 'first row:', rows[0]);
 
         // Write the new values
         if (rows.length > 0) {
