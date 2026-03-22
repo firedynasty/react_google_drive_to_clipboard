@@ -337,7 +337,9 @@ function DriveSearch() {
   };
 
   const saveFileToGoogleDrive = async () => {
-    if (!currentFileId || !accessToken) return;
+    console.log('[Save] currentFileId:', currentFileId, 'accessToken:', !!accessToken);
+    if (!currentFileId) { setStatus('Error: no file ID — re-open the file and try again'); return; }
+    if (!accessToken) { setStatus('Error: not signed in'); return; }
 
     setSaving(true);
     setStatus(`Saving "${currentFileName}"...`);
