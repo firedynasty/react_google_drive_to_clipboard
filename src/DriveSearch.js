@@ -110,6 +110,8 @@ function DriveSearch() {
   const [sheetNames, setSheetNames] = useState([]);
   const [pendingWorkbook, setPendingWorkbook] = useState(null);
   const [pendingFileName, setPendingFileName] = useState('');
+  const [pendingFileId, setPendingFileId] = useState('');
+  const [pendingFileMimeType, setPendingFileMimeType] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(2);
   const [selectedRow, setSelectedRow] = useState(null);
   const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
@@ -123,6 +125,29 @@ function DriveSearch() {
   const [pillDeleteMap, setPillDeleteMap] = useState({}); // emailId -> 'y'|'n' for pill modal trash selection
   const [emailFormatted, setEmailFormatted] = useState(false); // TXT>MD toggle
   const [emailFontSize, setEmailFontSize] = useState(14); // modal font size
+  const tokenExpiryRef = React.useRef(null); // timestamp when current token expires
+
+  const getValidToken = React.useCallback(() => {
+    return new Promise((resolve, reject) => {
+      if (!tokenClient) return reject(new Error('Not signed in'));
+      const now = Date.now();
+      if (accessToken && tokenExpiryRef.current && now < tokenExpiryRef.current - 60000) {
+        // Token still valid (with 1-min buffer)
+        return resolve(accessToken);
+      }
+      // Token expired or missing — request a new one silently
+      tokenClient.callback = (response) => {
+        if (response.access_token) {
+          setAccessToken(response.access_token);
+          tokenExpiryRef.current = Date.now() + (response.expires_in || 3600) * 1000;
+          resolve(response.access_token);
+        } else {
+          reject(new Error('Failed to refresh token'));
+        }
+      };
+      tokenClient.requestAccessToken({ prompt: '' });
+    });
+  }, [accessToken, tokenClient]);
 
   useEffect(() => {
     const initClient = () => {
@@ -133,6 +158,7 @@ function DriveSearch() {
           callback: (response) => {
             if (response.access_token) {
               setAccessToken(response.access_token);
+              tokenExpiryRef.current = Date.now() + (response.expires_in || 3600) * 1000;
               setStatus('Signed in');
             }
           },
@@ -227,6 +253,8 @@ function DriveSearch() {
         } else {
           setPendingWorkbook(workbook);
           setPendingFileName(fileName);
+          setPendingFileId(fileId);
+          setPendingFileMimeType(mimeType);
           setSheetNames(workbook.SheetNames);
           setSheetPickerOpen(true);
           setStatus(`"${fileName}" has ${workbook.SheetNames.length} sheets - pick one`);
@@ -262,6 +290,8 @@ function DriveSearch() {
           // Multiple sheets - show picker
           setPendingWorkbook(workbook);
           setPendingFileName(fileName);
+          setPendingFileId(fileId);
+          setPendingFileMimeType(mimeType);
           setSheetNames(workbook.SheetNames);
           setSheetPickerOpen(true);
           setStatus(`"${fileName}" has ${workbook.SheetNames.length} sheets - pick one`);
@@ -302,13 +332,16 @@ function DriveSearch() {
     const csv = XLSX.utils.sheet_to_csv(sheet);
     setFileContent(csv);
     setCurrentFileName(`${pendingFileName} [${sheetName}]`);
-    setCurrentFileMimeType('application/vnd.google-apps.spreadsheet');
+    setCurrentFileId(pendingFileId);
+    setCurrentFileMimeType(pendingFileMimeType || 'application/vnd.google-apps.spreadsheet');
     setCurrentSheetName(sheetName);
     setIsEditMode(false);
     setEditContent('');
     setSheetPickerOpen(false);
     setPendingWorkbook(null);
     setPendingFileName('');
+    setPendingFileId('');
+    setPendingFileMimeType('');
     setSheetNames([]);
     setStatus(`Loaded sheet "${sheetName}"`);
   };
