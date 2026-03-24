@@ -924,10 +924,12 @@ function DriveSearch() {
   };
 
   const moveFirstToTrash = () => {
-    if (filteredEmails.length === 0) return;
-    const first = filteredEmails[0];
-    setTrashEmails(prev => [...prev, first]);
-    setEmails(prev => prev.filter(em => em.id !== first.id));
+    if (sortedLabels.length === 0) return;
+    const firstLabel = sortedLabels[0];
+    const domainEmails = filteredEmails.filter(e => e.label === firstLabel);
+    if (domainEmails.length === 0) return;
+    setTrashEmails(prev => [...prev, ...domainEmails]);
+    setEmails(prev => prev.filter(em => em.label !== firstLabel));
   };
 
   const moveDomainToStaging = (label) => {
