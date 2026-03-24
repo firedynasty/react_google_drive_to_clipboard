@@ -923,6 +923,13 @@ function DriveSearch() {
     setEmails(prev => prev.filter(em => !filteredEmails.find(fe => fe.id === em.id)));
   };
 
+  const moveFirstToTrash = () => {
+    if (filteredEmails.length === 0) return;
+    const first = filteredEmails[0];
+    setTrashEmails(prev => [...prev, first]);
+    setEmails(prev => prev.filter(em => em.id !== first.id));
+  };
+
   const moveDomainToStaging = (label) => {
     const domainEmails = filteredEmails.filter(e => e.label === label);
     setTrashEmails(prev => [...prev, ...domainEmails]);
@@ -1476,6 +1483,9 @@ function DriveSearch() {
             {(emails.length > 0 || trashEmails.length > 0) && (
               <>
                 <div className="email-pill-controls">
+                  <button onClick={moveFirstToTrash} className="move-all-btn to-trash" disabled={filteredEmails.length === 0}>
+                    1st → Trash
+                  </button>
                   <button onClick={moveAllToTrash} className="move-all-btn to-trash" disabled={filteredEmails.length === 0}>
                     All → Trash ({filteredEmails.length})
                   </button>
