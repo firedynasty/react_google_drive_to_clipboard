@@ -1381,9 +1381,16 @@ function DriveSearch() {
                   {currentFileMimeType === 'application/vnd.google-apps.spreadsheet' ? (
                     <button
                       className="edit-btn"
-                      onClick={() => setShowRowInput(!showRowInput)}
+                      onClick={async () => {
+                        let clipText = '';
+                        try { clipText = await navigator.clipboard.readText(); } catch(e) {}
+                        setNewChinese(clipText);
+                        setNewPinyin('');
+                        setNewEnglish('');
+                        setShowRowInput(true);
+                      }}
                     >
-                      {showRowInput ? 'Hide' : 'Add Row'}
+                      Add Row
                     </button>
                   ) : (
                     <button
@@ -1418,35 +1425,6 @@ function DriveSearch() {
                   </button>
                 </div>
               </div>
-              {showRowInput && currentFileMimeType === 'application/vnd.google-apps.spreadsheet' && (
-                <div className="row-input-bar">
-                  <input
-                    type="text"
-                    placeholder="Chinese"
-                    value={newChinese}
-                    onChange={(e) => setNewChinese(e.target.value)}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Pinyin"
-                    value={newPinyin}
-                    onChange={(e) => setNewPinyin(e.target.value)}
-                  />
-                  <input
-                    type="text"
-                    placeholder="English"
-                    value={newEnglish}
-                    onChange={(e) => setNewEnglish(e.target.value)}
-                  />
-                  <button
-                    className="add-row-btn"
-                    onClick={appendRowToSheet}
-                    disabled={addingRow}
-                  >
-                    {addingRow ? 'Adding...' : 'Add Row'}
-                  </button>
-                </div>
-              )}
               {isEditMode ? (
                 <textarea
                   className="edit-textarea"
@@ -1742,6 +1720,48 @@ function DriveSearch() {
               ))}
             </div>
           </div>
+
+          {/* Add Row Modal */}
+          {showRowInput && (
+            <div className="sheet-picker-overlay" onClick={() => setShowRowInput(false)}>
+              <div className="add-row-modal" onClick={(e) => e.stopPropagation()}>
+                <div className="add-row-modal-header">
+                  <h3>Add Row</h3>
+                  <button className="modal-close-btn" onClick={() => setShowRowInput(false)}>&times;</button>
+                </div>
+                <div className="add-row-modal-body">
+                  <label>Chinese</label>
+                  <input
+                    type="text"
+                    placeholder="Chinese"
+                    value={newChinese}
+                    onChange={(e) => setNewChinese(e.target.value)}
+                  />
+                  <label>Pinyin</label>
+                  <input
+                    type="text"
+                    placeholder="Pinyin"
+                    value={newPinyin}
+                    onChange={(e) => setNewPinyin(e.target.value)}
+                  />
+                  <label>English</label>
+                  <input
+                    type="text"
+                    placeholder="English"
+                    value={newEnglish}
+                    onChange={(e) => setNewEnglish(e.target.value)}
+                  />
+                  <button
+                    className="add-row-btn"
+                    onClick={appendRowToSheet}
+                    disabled={addingRow}
+                  >
+                    {addingRow ? 'Adding...' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Sheet Picker Modal */}
           {sheetPickerOpen && (

@@ -1107,44 +1107,75 @@ input:checked + .slider:before {
   cursor: not-allowed;
 }
 
-.row-input-bar {
+.add-row-modal {
+  background: #1a1a2e;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  border: 1px solid #333;
   display: flex;
-  gap: 8px;
-  padding: 10px 15px;
-  background: #1a1a3e;
+  flex-direction: column;
+}
+
+.add-row-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
   border-bottom: 1px solid #333;
 }
 
-.row-input-bar input {
-  flex: 1;
-  padding: 8px 12px;
+.add-row-modal-header h3 {
+  margin: 0;
+  color: #fff;
+  font-size: 18px;
+}
+
+.add-row-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.add-row-modal-body label {
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.add-row-modal-body input {
+  padding: 10px 14px;
   border: 1px solid #444;
   border-radius: 6px;
   background: #0d1b2a;
   color: #e0e0e0;
-  font-size: 13px;
+  font-size: 15px;
   font-family: inherit;
 }
 
-.row-input-bar input::placeholder {
-  color: #666;
+.add-row-modal-body input::placeholder {
+  color: #555;
 }
 
-.row-input-bar input:focus {
+.add-row-modal-body input:focus {
   border-color: #2563eb;
   outline: none;
 }
 
 .add-row-btn {
-  padding: 8px 16px;
+  padding: 12px 16px;
   border: none;
   border-radius: 6px;
   background: #28a745;
   color: white;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  white-space: nowrap;
+  width: 100%;
+  margin-top: 6px;
 }
 
 .add-row-btn:hover {
