@@ -1107,6 +1107,55 @@ input:checked + .slider:before {
   cursor: not-allowed;
 }
 
+.row-input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 15px;
+  background: #1a1a3e;
+  border-bottom: 1px solid #333;
+}
+
+.row-input-bar input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #0d1b2a;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.row-input-bar input::placeholder {
+  color: #666;
+}
+
+.row-input-bar input:focus {
+  border-color: #2563eb;
+  outline: none;
+}
+
+.add-row-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #28a745;
+  color: white;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.add-row-btn:hover {
+  background: #218838;
+}
+
+.add-row-btn:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
 .file-content-display .edit-textarea {
   width: 100%;
   min-height: 400px;

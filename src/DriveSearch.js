@@ -113,6 +113,11 @@ function DriveSearch() {
   const [pendingFileId, setPendingFileId] = useState('');
   const [pendingFileMimeType, setPendingFileMimeType] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(2);
+  const [showRowInput, setShowRowInput] = useState(false);
+  const [newChinese, setNewChinese] = useState('');
+  const [newPinyin, setNewPinyin] = useState('');
+  const [newEnglish, setNewEnglish] = useState('');
+  const [addingRow, setAddingRow] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
   const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
   const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
@@ -492,6 +497,54 @@ function DriveSearch() {
       setStatus('Error saving: ' + error.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const appendRowToSheet = async () => {
+    if (!currentFileId) { setStatus('Error: no file ID — re-open the file'); return; }
+    if (!accessToken) { setStatus('Error: not signed in'); return; }
+    if (!newChinese && !newPinyin && !newEnglish) { setStatus('Enter at least one field'); return; }
+
+    setAddingRow(true);
+    try {
+      const sheetName = currentSheetName || 'Sheet1';
+      const encodedSheet = encodeURIComponent(sheetName);
+      const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A:C:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+
+      const resp = await fetch(appendUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values: [[newChinese, newPinyin, newEnglish]] }),
+      });
+
+      if (!resp.ok) {
+        const errorText = await resp.text();
+        let errorMsg;
+        try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+        throw new Error(errorMsg || `Append failed: HTTP ${resp.status}`);
+      }
+
+      // Update local fileContent by appending the new row as CSV
+      const escapeCsvField = (f) => {
+        if (f.includes(',') || f.includes('"') || f.includes('\n')) {
+          return '"' + f.replace(/"/g, '""') + '"';
+        }
+        return f;
+      };
+      const newLine = [newChinese, newPinyin, newEnglish].map(escapeCsvField).join(',');
+      setFileContent(prev => prev.trimEnd() + '\n' + newLine);
+
+      setNewChinese('');
+      setNewPinyin('');
+      setNewEnglish('');
+      setStatus('Row added successfully!');
+    } catch (error) {
+      setStatus('Error adding row: ' + error.message);
+    } finally {
+      setAddingRow(false);
     }
   };
 
@@ -1325,12 +1378,21 @@ function DriveSearch() {
                   >
                     Copy
                   </button>
-                  <button
-                    className="edit-btn"
-                    onClick={toggleEditMode}
-                  >
-                    {isEditMode ? 'View' : 'Edit'}
-                  </button>
+                  {currentFileMimeType === 'application/vnd.google-apps.spreadsheet' ? (
+                    <button
+                      className="edit-btn"
+                      onClick={() => setShowRowInput(!showRowInput)}
+                    >
+                      {showRowInput ? 'Hide' : 'Add Row'}
+                    </button>
+                  ) : (
+                    <button
+                      className="edit-btn"
+                      onClick={toggleEditMode}
+                    >
+                      {isEditMode ? 'View' : 'Edit'}
+                    </button>
+                  )}
                   {isEditMode && (
                     <button
                       className="save-btn"
@@ -1349,12 +1411,42 @@ function DriveSearch() {
                       setCurrentFileMimeType('');
                       setIsEditMode(false);
                       setEditContent('');
+                      setShowRowInput(false);
                     }}
                   >
                     Clear
                   </button>
                 </div>
               </div>
+              {showRowInput && currentFileMimeType === 'application/vnd.google-apps.spreadsheet' && (
+                <div className="row-input-bar">
+                  <input
+                    type="text"
+                    placeholder="Chinese"
+                    value={newChinese}
+                    onChange={(e) => setNewChinese(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Pinyin"
+                    value={newPinyin}
+                    onChange={(e) => setNewPinyin(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    placeholder="English"
+                    value={newEnglish}
+                    onChange={(e) => setNewEnglish(e.target.value)}
+                  />
+                  <button
+                    className="add-row-btn"
+                    onClick={appendRowToSheet}
+                    disabled={addingRow}
+                  >
+                    {addingRow ? 'Adding...' : 'Add Row'}
+                  </button>
+                </div>
+              )}
               {isEditMode ? (
                 <textarea
                   className="edit-textarea"
