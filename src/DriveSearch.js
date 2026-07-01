@@ -117,8 +117,12 @@ function DriveSearch() {
   const [newChinese, setNewChinese] = useState('');
   const [newPinyin, setNewPinyin] = useState('');
   const [newEnglish, setNewEnglish] = useState('');
+  const [newActivity, setNewActivity] = useState('break');
+  const [newTime, setNewTime] = useState('');
+  const [newDate, setNewDate] = useState('');
   const [addingRow, setAddingRow] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
+  const [addRowMode, setAddRowMode] = useState('chinese'); // 'chinese' or 'time'
   const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
   const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
@@ -503,13 +507,26 @@ function DriveSearch() {
   const appendRowToSheet = async () => {
     if (!currentFileId) { setStatus('Error: no file ID — re-open the file'); return; }
     if (!accessToken) { setStatus('Error: not signed in'); return; }
-    if (!newChinese && !newPinyin && !newEnglish) { setStatus('Enter at least one field'); return; }
+
+    let rowValues;
+    let colRange;
+
+    if (addRowMode === 'time') {
+      if (!newTime) { setStatus('Enter a time'); return; }
+      if (!newActivity) { setStatus('Select an activity'); return; }
+      rowValues = [newDate, newTime, newActivity];
+      colRange = 'A:C';
+    } else {
+      if (!newChinese && !newPinyin && !newEnglish) { setStatus('Enter at least one field'); return; }
+      rowValues = [newChinese, newPinyin, newEnglish];
+      colRange = 'A:C';
+    }
 
     setAddingRow(true);
     try {
       const sheetName = currentSheetName || 'Sheet1';
       const encodedSheet = encodeURIComponent(sheetName);
-      const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A:C:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+      const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!${colRange}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
 
       const resp = await fetch(appendUrl, {
         method: 'POST',
@@ -517,7 +534,7 @@ function DriveSearch() {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ values: [[newChinese, newPinyin, newEnglish]] }),
+        body: JSON.stringify({ values: [rowValues] }),
       });
 
       if (!resp.ok) {
@@ -534,12 +551,17 @@ function DriveSearch() {
         }
         return f;
       };
-      const newLine = [newChinese, newPinyin, newEnglish].map(escapeCsvField).join(',');
+      const newLine = rowValues.map(escapeCsvField).join(',');
       setFileContent(prev => prev.trimEnd() + '\n' + newLine);
 
-      setNewChinese('');
-      setNewPinyin('');
-      setNewEnglish('');
+      if (addRowMode === 'time') {
+        setNewTime('');
+        setNewActivity('break');
+      } else {
+        setNewChinese('');
+        setNewPinyin('');
+        setNewEnglish('');
+      }
       setStatus('Row added successfully!');
     } catch (error) {
       setStatus('Error adding row: ' + error.message);
@@ -1387,6 +1409,18 @@ function DriveSearch() {
                         setNewChinese(clipText);
                         setNewPinyin('');
                         setNewEnglish('');
+                        // Pre-fill date from selected row for time tracking mode
+                        if (selectedRow !== null) {
+                          const rows = parseCsv(fileContent);
+                          const dataRow = rows[selectedRow + 1]; // +1 to skip header
+                          if (dataRow && dataRow[0]) {
+                            setNewDate(dataRow[0]);
+                          }
+                        } else {
+                          setNewDate(new Date().toISOString().split('T')[0]);
+                        }
+                        setNewTime('');
+                        setNewActivity('break');
                         setShowRowInput(true);
                       }}
                     >
@@ -1729,28 +1763,84 @@ function DriveSearch() {
                   <h3>Add Row</h3>
                   <button className="modal-close-btn" onClick={() => setShowRowInput(false)}>&times;</button>
                 </div>
+                <div className="add-row-mode-toggle">
+                  <label className={addRowMode === 'chinese' ? 'active' : ''}>
+                    <input
+                      type="radio"
+                      name="addRowMode"
+                      value="chinese"
+                      checked={addRowMode === 'chinese'}
+                      onChange={() => setAddRowMode('chinese')}
+                    />
+                    Chinese
+                  </label>
+                  <label className={addRowMode === 'time' ? 'active' : ''}>
+                    <input
+                      type="radio"
+                      name="addRowMode"
+                      value="time"
+                      checked={addRowMode === 'time'}
+                      onChange={() => setAddRowMode('time')}
+                    />
+                    Time Tracking
+                  </label>
+                </div>
                 <div className="add-row-modal-body">
-                  <label>Chinese</label>
-                  <input
-                    type="text"
-                    placeholder="Chinese"
-                    value={newChinese}
-                    onChange={(e) => setNewChinese(e.target.value)}
-                  />
-                  <label>Pinyin</label>
-                  <input
-                    type="text"
-                    placeholder="Pinyin"
-                    value={newPinyin}
-                    onChange={(e) => setNewPinyin(e.target.value)}
-                  />
-                  <label>English</label>
-                  <input
-                    type="text"
-                    placeholder="English"
-                    value={newEnglish}
-                    onChange={(e) => setNewEnglish(e.target.value)}
-                  />
+                  {addRowMode === 'chinese' ? (
+                    <>
+                      <label>Chinese</label>
+                      <input
+                        type="text"
+                        placeholder="Chinese"
+                        value={newChinese}
+                        onChange={(e) => setNewChinese(e.target.value)}
+                      />
+                      <label>Pinyin</label>
+                      <input
+                        type="text"
+                        placeholder="Pinyin"
+                        value={newPinyin}
+                        onChange={(e) => setNewPinyin(e.target.value)}
+                      />
+                      <label>English</label>
+                      <input
+                        type="text"
+                        placeholder="English"
+                        value={newEnglish}
+                        onChange={(e) => setNewEnglish(e.target.value)}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <label>Date</label>
+                      <input
+                        type="text"
+                        value={newDate}
+                        readOnly
+                        style={{ opacity: 0.6, cursor: 'default' }}
+                      />
+                      <label>Time</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 09:30:00"
+                        value={newTime}
+                        onChange={(e) => setNewTime(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') appendRowToSheet(); }}
+                        autoFocus
+                      />
+                      <label>Activity</label>
+                      <select
+                        value={newActivity}
+                        onChange={(e) => setNewActivity(e.target.value)}
+                        className="activity-select"
+                      >
+                        <option value="break">break</option>
+                        <option value="work">work</option>
+                        <option value="lunch">lunch</option>
+                        <option value="youtube">youtube</option>
+                      </select>
+                    </>
+                  )}
                   <button
                     className="add-row-btn"
                     onClick={appendRowToSheet}
