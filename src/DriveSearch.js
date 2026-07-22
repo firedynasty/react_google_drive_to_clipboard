@@ -299,6 +299,9 @@ function DriveSearch() {
         );
         if (!response.ok) throw new Error('Export failed');
         content = await response.text();
+        // Drive exports CRLF line endings; normalize to LF — the Docs API
+        // would otherwise treat each \r as an extra paragraph break on save
+        content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       } else if (/\.xlsx?$/i.test(fileName)) {
         // Excel files - download as binary and parse with SheetJS
         const response = await fetch(
@@ -489,7 +492,8 @@ function DriveSearch() {
         requests.push({
           insertText: {
             location: { index: 1 },
-            text: contentToSave
+            // Strip \r — the Docs API treats it as an extra paragraph break
+            text: contentToSave.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
           }
         });
       }
@@ -603,8 +607,9 @@ function DriveSearch() {
   // Overrides are passed by the auto-flush path since state updates haven't landed yet.
   const savePendingNotes = async (notesOverride, contentOverride) => {
     if (savingNotes) return; // a flush is already in flight — notes stay queued for the next one
-    const notesToSave = notesOverride || pendingNotes;
-    const contentToSave = contentOverride || fileContent;
+    // Guard: when used as an onClick handler, React passes the event as the first arg
+    const notesToSave = Array.isArray(notesOverride) ? notesOverride : pendingNotes;
+    const contentToSave = typeof contentOverride === 'string' ? contentOverride : fileContent;
     if (notesToSave.length === 0) return;
     if (!currentFileId) { setStatus('Error: no file ID — re-open the file'); return; }
 
@@ -1540,7 +1545,7 @@ function DriveSearch() {
                 </button>
                 <button
                   className="save-notes-btn"
-                  onClick={savePendingNotes}
+                  onClick={() => savePendingNotes()}
                   disabled={pendingNotes.length === 0 || savingNotes}
                 >
                   {savingNotes ? 'Saving...' : `Save${pendingNotes.length > 0 ? ` (${pendingNotes.length})` : ''}`}
