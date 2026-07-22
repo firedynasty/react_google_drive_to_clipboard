@@ -4,6 +4,9 @@ import * as XLSX from 'xlsx';
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
 
+// Auto-save queued notes to Drive every N notes (mobile safety net)
+const AUTO_FLUSH_AT = 5;
+
 // Email label mapping: domain pattern -> friendly label name
 // Add your own mappings here! Partial matches work (e.g., 'newsletter' matches 'dailynewsletter.com')
 const EMAIL_LABELS = {
@@ -113,6 +116,9 @@ function DriveSearch() {
   const [pendingFileId, setPendingFileId] = useState('');
   const [pendingFileMimeType, setPendingFileMimeType] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(2);
+  const [appendNote, setAppendNote] = useState('');
+  const [pendingNotes, setPendingNotes] = useState([]); // queued notes not yet saved to Drive
+  const [savingNotes, setSavingNotes] = useState(false);
   const [showRowInput, setShowRowInput] = useState(false);
   const [newChinese, setNewChinese] = useState('');
   const [newPinyin, setNewPinyin] = useState('');
@@ -216,6 +222,7 @@ function DriveSearch() {
   }, [searchQuery, accessToken, fileTypeToggle]);
 
   const handleFileClick = async (fileId, fileName, mimeType) => {
+    if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s) for "${currentFileName}"?`)) return;
     setStatus(`Fetching ${fileName}...`);
 
     try {
@@ -302,6 +309,8 @@ function DriveSearch() {
       setCurrentFileMimeType(mimeType);
       setIsEditMode(false);
       setEditContent('');
+      setAppendNote('');
+      setPendingNotes([]);
       setStatus(`Loaded "${fileName}"`);
     } catch (error) {
       setStatus('Error: ' + error.message);
@@ -324,6 +333,8 @@ function DriveSearch() {
     setCurrentSheetName(sheetName);
     setIsEditMode(false);
     setEditContent('');
+    setAppendNote('');
+    setPendingNotes([]);
     setSheetPickerOpen(false);
     setPendingWorkbook(null);
     setPendingFileName('');
@@ -345,6 +356,140 @@ function DriveSearch() {
     }
   };
 
+  // Writes content to Google Drive using the API appropriate for the file type.
+  // Throws on failure; does not touch component state.
+  const writeContentToGoogleDrive = async (contentToSave) => {
+    if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
+      // Native Google Sheets: parse CSV back into rows and write via Sheets API
+      const sheetName = currentSheetName || 'Sheet1';
+
+      console.log('[Save Sheets] mimeType:', currentFileMimeType);
+      console.log('[Save Sheets] fileId:', currentFileId);
+      console.log('[Save Sheets] sheetName:', sheetName);
+      console.log('[Save Sheets] contentToSave length:', contentToSave.length);
+      console.log('[Save Sheets] contentToSave preview:', contentToSave.substring(0, 200));
+
+      // Parse the edited CSV text into a 2D array
+      const rows = [];
+      let remaining = contentToSave.trim();
+      while (remaining.length > 0) {
+        const parsed = parseCsvRows(remaining);
+        rows.push(parsed.cells);
+        remaining = parsed.rest;
+      }
+
+      console.log('[Save Sheets] parsed rows count:', rows.length);
+      console.log('[Save Sheets] first row:', rows[0]);
+      console.log('[Save Sheets] last row:', rows[rows.length - 1]);
+
+      // Clear the sheet first, then write new values
+      const encodedSheet = encodeURIComponent(sheetName);
+      const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}:clear`;
+      console.log('[Save Sheets] clearing:', clearUrl);
+
+      const clearResp = await fetch(clearUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+
+      console.log('[Save Sheets] clear status:', clearResp.status);
+      if (!clearResp.ok) {
+        const errorText = await clearResp.text();
+        console.error('[Save Sheets] clear error body:', errorText);
+        let errorMsg;
+        try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+        throw new Error(errorMsg || `Clear failed: HTTP ${clearResp.status} — ${errorText.substring(0, 200)}`);
+      }
+
+      // Write the new values
+      if (rows.length > 0) {
+        const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A1?valueInputOption=RAW`;
+        console.log('[Save Sheets] updating:', updateUrl);
+
+        const updateResp = await fetch(updateUrl, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ values: rows }),
+        });
+
+        console.log('[Save Sheets] update status:', updateResp.status);
+        if (!updateResp.ok) {
+          const errorText = await updateResp.text();
+          console.error('[Save Sheets] update error body:', errorText);
+          let errorMsg;
+          try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+          throw new Error(errorMsg || `Update failed: HTTP ${updateResp.status} — ${errorText.substring(0, 200)}`);
+        }
+
+        const updateData = await updateResp.json();
+        console.log('[Save Sheets] update response:', updateData);
+      }
+    } else if (currentFileMimeType === 'application/vnd.google-apps.document') {
+      // Native Google Docs: delete all content then insert new text via Docs API
+      const docResp = await fetch(
+        `https://docs.googleapis.com/v1/documents/${currentFileId}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!docResp.ok) throw new Error('Failed to read Google Doc');
+      const doc = await docResp.json();
+
+      const requests = [];
+      const endIndex = doc.body.content[doc.body.content.length - 1].endIndex;
+      if (endIndex > 2) {
+        requests.push({
+          deleteContentRange: {
+            range: { startIndex: 1, endIndex: endIndex - 1 }
+          }
+        });
+      }
+      if (contentToSave) {
+        requests.push({
+          insertText: {
+            location: { index: 1 },
+            text: contentToSave
+          }
+        });
+      }
+
+      const updateResp = await fetch(
+        `https://docs.googleapis.com/v1/documents/${currentFileId}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ requests }),
+        }
+      );
+      if (!updateResp.ok) {
+        const errorData = await updateResp.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `HTTP ${updateResp.status}`);
+      }
+    } else {
+      // Regular files: upload via Drive API
+      const response = await fetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${currentFileId}?uploadType=media`,
+        {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'text/plain',
+          },
+          body: contentToSave,
+        }
+      );
+
+      if (!(response.status >= 200 && response.status < 300)) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+      }
+    }
+  };
+
   const saveFileToGoogleDrive = async () => {
     console.log('[Save] currentFileId:', currentFileId, 'accessToken:', !!accessToken);
     if (!currentFileId) { setStatus('Error: no file ID — re-open the file and try again'); return; }
@@ -363,144 +508,93 @@ function DriveSearch() {
       const contentToSave = isEditMode ? editContent : fileContent;
       console.log('[Save] contentToSave length:', contentToSave?.length, 'from:', isEditMode ? 'editContent' : 'fileContent');
 
-      if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
-        // Native Google Sheets: parse CSV back into rows and write via Sheets API
-        const sheetName = currentSheetName || 'Sheet1';
+      await writeContentToGoogleDrive(contentToSave);
 
-        console.log('[Save Sheets] mimeType:', currentFileMimeType);
-        console.log('[Save Sheets] fileId:', currentFileId);
-        console.log('[Save Sheets] sheetName:', sheetName);
-        console.log('[Save Sheets] contentToSave length:', contentToSave.length);
-        console.log('[Save Sheets] contentToSave preview:', contentToSave.substring(0, 200));
-
-        // Parse the edited CSV text into a 2D array
-        const rows = [];
-        let remaining = contentToSave.trim();
-        while (remaining.length > 0) {
-          const parsed = parseCsvRows(remaining);
-          rows.push(parsed.cells);
-          remaining = parsed.rest;
-        }
-
-        console.log('[Save Sheets] parsed rows count:', rows.length);
-        console.log('[Save Sheets] first row:', rows[0]);
-        console.log('[Save Sheets] last row:', rows[rows.length - 1]);
-
-        // Clear the sheet first, then write new values
-        const encodedSheet = encodeURIComponent(sheetName);
-        const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}:clear`;
-        console.log('[Save Sheets] clearing:', clearUrl);
-
-        const clearResp = await fetch(clearUrl, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
-
-        console.log('[Save Sheets] clear status:', clearResp.status);
-        if (!clearResp.ok) {
-          const errorText = await clearResp.text();
-          console.error('[Save Sheets] clear error body:', errorText);
-          let errorMsg;
-          try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
-          throw new Error(errorMsg || `Clear failed: HTTP ${clearResp.status} — ${errorText.substring(0, 200)}`);
-        }
-
-        // Write the new values
-        if (rows.length > 0) {
-          const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A1?valueInputOption=RAW`;
-          console.log('[Save Sheets] updating:', updateUrl);
-
-          const updateResp = await fetch(updateUrl, {
-            method: 'PUT',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ values: rows }),
-          });
-
-          console.log('[Save Sheets] update status:', updateResp.status);
-          if (!updateResp.ok) {
-            const errorText = await updateResp.text();
-            console.error('[Save Sheets] update error body:', errorText);
-            let errorMsg;
-            try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
-            throw new Error(errorMsg || `Update failed: HTTP ${updateResp.status} — ${errorText.substring(0, 200)}`);
-          }
-
-          const updateData = await updateResp.json();
-          console.log('[Save Sheets] update response:', updateData);
-        }
-      } else if (currentFileMimeType === 'application/vnd.google-apps.document') {
-        // Native Google Docs: delete all content then insert new text via Docs API
-        const docResp = await fetch(
-          `https://docs.googleapis.com/v1/documents/${currentFileId}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
-        if (!docResp.ok) throw new Error('Failed to read Google Doc');
-        const doc = await docResp.json();
-
-        const requests = [];
-        const endIndex = doc.body.content[doc.body.content.length - 1].endIndex;
-        if (endIndex > 2) {
-          requests.push({
-            deleteContentRange: {
-              range: { startIndex: 1, endIndex: endIndex - 1 }
-            }
-          });
-        }
-        if (contentToSave) {
-          requests.push({
-            insertText: {
-              location: { index: 1 },
-              text: contentToSave
-            }
-          });
-        }
-
-        const updateResp = await fetch(
-          `https://docs.googleapis.com/v1/documents/${currentFileId}:batchUpdate`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ requests }),
-          }
-        );
-        if (!updateResp.ok) {
-          const errorData = await updateResp.json().catch(() => ({}));
-          throw new Error(errorData.error?.message || `HTTP ${updateResp.status}`);
-        }
-      } else {
-        // Regular files: upload via Drive API
-        const response = await fetch(
-          `https://www.googleapis.com/upload/drive/v3/files/${currentFileId}?uploadType=media`,
-          {
-            method: 'PATCH',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'text/plain',
-            },
-            body: contentToSave,
-          }
-        );
-
-        if (!(response.status >= 200 && response.status < 300)) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error?.message || `HTTP ${response.status}`);
-        }
-      }
-
-      // Update local state
+      // Update local state (a full save includes any queued notes)
       setFileContent(contentToSave);
       setIsEditMode(false);
+      setPendingNotes([]);
       setStatus(`Saved "${currentFileName}" successfully!`);
     } catch (error) {
       setStatus('Error saving: ' + error.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Queue a note locally (updates the view immediately) — no API call until Save.
+  // Auto-flushes to Drive every AUTO_FLUSH_AT notes so mobile tab kills lose at most a few notes.
+  const queueNote = () => {
+    const note = appendNote.trim();
+    if (!note) { setStatus('Type a note first'); return; }
+    if (!currentFileId) { setStatus('Error: no file ID — re-open the file'); return; }
+
+    let newContent;
+    if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
+      const escaped = /[",\n]/.test(note) ? '"' + note.replace(/"/g, '""') + '"' : note;
+      newContent = fileContent.trimEnd() + '\n' + escaped;
+    } else {
+      newContent = fileContent.replace(/\n+$/, '') + '\n' + note + '\n';
+    }
+    const newQueue = [...pendingNotes, note];
+    setFileContent(newContent);
+    setPendingNotes(newQueue);
+    setAppendNote('');
+
+    if (newQueue.length >= AUTO_FLUSH_AT) {
+      savePendingNotes(newQueue, newContent);
+    } else {
+      setStatus(`Note queued (${newQueue.length} unsaved)`);
+    }
+  };
+
+  // Flush queued notes to Google Drive in a single call.
+  // Overrides are passed by the auto-flush path since state updates haven't landed yet.
+  const savePendingNotes = async (notesOverride, contentOverride) => {
+    if (savingNotes) return; // a flush is already in flight — notes stay queued for the next one
+    const notesToSave = notesOverride || pendingNotes;
+    const contentToSave = contentOverride || fileContent;
+    if (notesToSave.length === 0) return;
+    if (!currentFileId) { setStatus('Error: no file ID — re-open the file'); return; }
+    if (!accessToken) { setStatus('Error: not signed in'); return; }
+
+    setSavingNotes(true);
+    setStatus(`Saving ${notesToSave.length} note(s) to "${currentFileName}"...`);
+
+    try {
+      if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
+        // Sheets: append queued notes as new rows in one call
+        const sheetName = currentSheetName || 'Sheet1';
+        const encodedSheet = encodeURIComponent(sheetName);
+        const appendUrl = `https://sheets.googleapis.com/v4/spreadsheets/${currentFileId}/values/${encodedSheet}!A:A:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
+
+        const resp = await fetch(appendUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ values: notesToSave.map(n => [n]) }),
+        });
+
+        if (!resp.ok) {
+          const errorText = await resp.text();
+          let errorMsg;
+          try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+          throw new Error(errorMsg || `Append failed: HTTP ${resp.status}`);
+        }
+      } else {
+        // Docs / text files: fileContent already includes the queued lines — write once
+        await writeContentToGoogleDrive(contentToSave);
+      }
+
+      setStatus(`Saved ${notesToSave.length} note(s) to "${currentFileName}"`);
+      // Remove only the notes that were saved — keep any queued while the save was in flight
+      setPendingNotes(prev => prev.slice(notesToSave.length));
+    } catch (error) {
+      setStatus('Error saving notes: ' + error.message);
+    } finally {
+      setSavingNotes(false);
     }
   };
 
@@ -626,6 +720,14 @@ function DriveSearch() {
       setStatus(`Error trashing email: ${err.message}`);
     }
   }, [accessToken]);
+
+  // Warn before leaving the page with unsaved queued notes
+  useEffect(() => {
+    if (pendingNotes.length === 0) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [pendingNotes.length]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -1365,6 +1467,25 @@ function DriveSearch() {
 
           {fileContent && (
             <div className="file-content-display">
+              <div className="append-note-bar">
+                <input
+                  type="text"
+                  value={appendNote}
+                  onChange={(e) => setAppendNote(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') queueNote(); }}
+                  placeholder="Quick note — queues locally, Save to flush..."
+                />
+                <button onClick={queueNote} disabled={!appendNote.trim()}>
+                  Add
+                </button>
+                <button
+                  className="save-notes-btn"
+                  onClick={savePendingNotes}
+                  disabled={pendingNotes.length === 0 || savingNotes}
+                >
+                  {savingNotes ? 'Saving...' : `Save${pendingNotes.length > 0 ? ` (${pendingNotes.length})` : ''}`}
+                </button>
+              </div>
               <div className="content-header">
                 <span>{currentFileName}</span>
                 <div className="copy-cell-toggle">
@@ -1446,12 +1567,15 @@ function DriveSearch() {
                   <button
                     className="clear-btn"
                     onClick={() => {
+                      if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return;
                       setFileContent('');
                       setCurrentFileName('');
                       setCurrentFileId('');
                       setCurrentFileMimeType('');
                       setIsEditMode(false);
                       setEditContent('');
+                      setAppendNote('');
+                      setPendingNotes([]);
                       setShowRowInput(false);
                     }}
                   >

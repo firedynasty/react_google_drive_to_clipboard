@@ -1019,7 +1019,62 @@ input:checked + .slider:before {
   padding: 10px 15px;
   border-bottom: 1px solid #333;
   background: #16213e;
+}
+
+.append-note-bar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 15px;
+  border-bottom: 1px solid #333;
+  background: #101730;
   border-radius: 4px 4px 0 0;
+}
+
+.append-note-bar input {
+  flex: 1;
+  padding: 10px;
+  font-size: 16px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  background: #0f0f23;
+  color: #fff;
+}
+
+.append-note-bar input:focus {
+  outline: none;
+  border-color: #4285f4;
+}
+
+.append-note-bar button {
+  padding: 10px 16px;
+  font-size: 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  background: #34a853;
+  color: white;
+}
+
+.append-note-bar button:hover {
+  background: #2d8f47;
+}
+
+.append-note-bar button:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
+.append-note-bar .save-notes-btn {
+  background: #4285f4;
+}
+
+.append-note-bar .save-notes-btn:hover {
+  background: #357abd;
+}
+
+.append-note-bar .save-notes-btn:disabled {
+  background: #666;
+  cursor: not-allowed;
 }
 
 .file-content-display .content-header span {
