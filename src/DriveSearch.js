@@ -119,6 +119,7 @@ function DriveSearch() {
   const [appendNote, setAppendNote] = useState('');
   const [pendingNotes, setPendingNotes] = useState([]); // queued notes not yet saved to Drive
   const [savingNotes, setSavingNotes] = useState(false);
+  const appendInputRef = React.useRef(null); // quick-note input, refocused after each Add
   const [showRowInput, setShowRowInput] = useState(false);
   const [newChinese, setNewChinese] = useState('');
   const [newPinyin, setNewPinyin] = useState('');
@@ -141,6 +142,8 @@ function DriveSearch() {
   const [emailFormatted, setEmailFormatted] = useState(false); // TXT>MD toggle
   const [emailFontSize, setEmailFontSize] = useState(14); // modal font size
   const tokenExpiryRef = React.useRef(null); // timestamp when current token expires
+  const tokenResolveRef = React.useRef(null); // pending silent-refresh promise handlers
+  const tokenPromiseRef = React.useRef(null); // in-flight silent-refresh promise
 
   useEffect(() => {
     const initClient = () => {
@@ -153,7 +156,15 @@ function DriveSearch() {
               setAccessToken(response.access_token);
               tokenExpiryRef.current = Date.now() + (response.expires_in || 3600) * 1000;
               setStatus('Signed in');
+              if (tokenResolveRef.current) {
+                tokenResolveRef.current.resolve(response.access_token);
+                tokenResolveRef.current = null;
+              }
+            } else if (tokenResolveRef.current) {
+              tokenResolveRef.current.reject(new Error(response.error || 're-auth failed'));
+              tokenResolveRef.current = null;
             }
+            tokenPromiseRef.current = null;
           },
         });
         setTokenClient(client);
@@ -187,7 +198,31 @@ function DriveSearch() {
       setResults([]);
       setStatus('Signed out');
     }
+    tokenExpiryRef.current = null;
+    tokenResolveRef.current = null;
+    tokenPromiseRef.current = null;
   };
+
+  // Returns a valid access token, silently refreshing if the current one expired.
+  // Google tokens last 1 hour — without this, saves fail mid-session.
+  const ensureFreshToken = useCallback(() => {
+    if (accessToken && tokenExpiryRef.current && Date.now() < tokenExpiryRef.current - 60000) {
+      return Promise.resolve(accessToken);
+    }
+    if (!tokenClient) return Promise.reject(new Error('not signed in'));
+    if (tokenPromiseRef.current) return tokenPromiseRef.current; // refresh already in flight
+    tokenPromiseRef.current = new Promise((resolve, reject) => {
+      tokenResolveRef.current = { resolve, reject };
+      try {
+        tokenClient.requestAccessToken({ prompt: '' });
+      } catch (e) {
+        tokenResolveRef.current = null;
+        tokenPromiseRef.current = null;
+        reject(e);
+      }
+    });
+    return tokenPromiseRef.current;
+  }, [accessToken, tokenClient]);
 
   const searchFiles = useCallback(async () => {
     if (!searchQuery.trim() || !accessToken) return;
@@ -358,7 +393,7 @@ function DriveSearch() {
 
   // Writes content to Google Drive using the API appropriate for the file type.
   // Throws on failure; does not touch component state.
-  const writeContentToGoogleDrive = async (contentToSave) => {
+  const writeContentToGoogleDrive = async (contentToSave, token = accessToken) => {
     if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
       // Native Google Sheets: parse CSV back into rows and write via Sheets API
       const sheetName = currentSheetName || 'Sheet1';
@@ -389,7 +424,7 @@ function DriveSearch() {
 
       const clearResp = await fetch(clearUrl, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${accessToken}` },
+        headers: { Authorization: `Bearer ${token}` },
       });
 
       console.log('[Save Sheets] clear status:', clearResp.status);
@@ -409,7 +444,7 @@ function DriveSearch() {
         const updateResp = await fetch(updateUrl, {
           method: 'PUT',
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ values: rows }),
@@ -431,9 +466,14 @@ function DriveSearch() {
       // Native Google Docs: delete all content then insert new text via Docs API
       const docResp = await fetch(
         `https://docs.googleapis.com/v1/documents/${currentFileId}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+        { headers: { Authorization: `Bearer ${token}` } }
       );
-      if (!docResp.ok) throw new Error('Failed to read Google Doc');
+      if (!docResp.ok) {
+        const errorText = await docResp.text();
+        let errorMsg;
+        try { errorMsg = JSON.parse(errorText).error?.message; } catch(e) {}
+        throw new Error(errorMsg || `Doc read failed: HTTP ${docResp.status}`);
+      }
       const doc = await docResp.json();
 
       const requests = [];
@@ -459,7 +499,7 @@ function DriveSearch() {
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ requests }),
@@ -476,7 +516,7 @@ function DriveSearch() {
         {
           method: 'PATCH',
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'text/plain',
           },
           body: contentToSave,
@@ -493,10 +533,18 @@ function DriveSearch() {
   const saveFileToGoogleDrive = async () => {
     console.log('[Save] currentFileId:', currentFileId, 'accessToken:', !!accessToken);
     if (!currentFileId) { setStatus('Error: no file ID — re-open the file and try again'); return; }
-    if (!accessToken) { setStatus('Error: not signed in'); return; }
 
     setSaving(true);
     setStatus(`Saving "${currentFileName}"...`);
+
+    let token;
+    try {
+      token = await ensureFreshToken();
+    } catch (e) {
+      setSaving(false);
+      setStatus('Session expired — please sign in again');
+      return;
+    }
 
     // Log token info (first 20 chars only for safety)
     console.log('[Save] accessToken present:', !!accessToken, accessToken?.substring(0, 20) + '...');
@@ -508,7 +556,7 @@ function DriveSearch() {
       const contentToSave = isEditMode ? editContent : fileContent;
       console.log('[Save] contentToSave length:', contentToSave?.length, 'from:', isEditMode ? 'editContent' : 'fileContent');
 
-      await writeContentToGoogleDrive(contentToSave);
+      await writeContentToGoogleDrive(contentToSave, token);
 
       // Update local state (a full save includes any queued notes)
       setFileContent(contentToSave);
@@ -534,12 +582,15 @@ function DriveSearch() {
       const escaped = /[",\n]/.test(note) ? '"' + note.replace(/"/g, '""') + '"' : note;
       newContent = fileContent.trimEnd() + '\n' + escaped;
     } else {
-      newContent = fileContent.replace(/\n+$/, '') + '\n' + note + '\n';
+      // Paragraph-style: one empty line between notes
+      const base = fileContent.replace(/\n+$/, '');
+      newContent = (base ? base + '\n\n' : '') + note + '\n';
     }
     const newQueue = [...pendingNotes, note];
     setFileContent(newContent);
     setPendingNotes(newQueue);
     setAppendNote('');
+    appendInputRef.current?.focus(); // keep mobile keyboard open for the next note
 
     if (newQueue.length >= AUTO_FLUSH_AT) {
       savePendingNotes(newQueue, newContent);
@@ -556,10 +607,18 @@ function DriveSearch() {
     const contentToSave = contentOverride || fileContent;
     if (notesToSave.length === 0) return;
     if (!currentFileId) { setStatus('Error: no file ID — re-open the file'); return; }
-    if (!accessToken) { setStatus('Error: not signed in'); return; }
 
     setSavingNotes(true);
     setStatus(`Saving ${notesToSave.length} note(s) to "${currentFileName}"...`);
+
+    let token;
+    try {
+      token = await ensureFreshToken();
+    } catch (e) {
+      setSavingNotes(false);
+      setStatus('Session expired — please sign in again');
+      return;
+    }
 
     try {
       if (currentFileMimeType === 'application/vnd.google-apps.spreadsheet') {
@@ -571,7 +630,7 @@ function DriveSearch() {
         const resp = await fetch(appendUrl, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ values: notesToSave.map(n => [n]) }),
@@ -585,7 +644,7 @@ function DriveSearch() {
         }
       } else {
         // Docs / text files: fileContent already includes the queued lines — write once
-        await writeContentToGoogleDrive(contentToSave);
+        await writeContentToGoogleDrive(contentToSave, token);
       }
 
       setStatus(`Saved ${notesToSave.length} note(s) to "${currentFileName}"`);
@@ -1470,6 +1529,7 @@ function DriveSearch() {
               <div className="append-note-bar">
                 <input
                   type="text"
+                  ref={appendInputRef}
                   value={appendNote}
                   onChange={(e) => setAppendNote(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') queueNote(); }}
