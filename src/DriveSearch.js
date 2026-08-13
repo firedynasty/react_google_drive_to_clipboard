@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
+import mammoth from 'mammoth';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
-const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
+const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
 
 // Auto-save queued notes to Drive every N notes (mobile safety net)
 const AUTO_FLUSH_AT = 5;
@@ -80,9 +81,6 @@ function parseCsv(text) {
 
 function DriveSearch() {
   const [accessToken, setAccessToken] = useState(null);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [results, setResults] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [tokenClient, setTokenClient] = useState(null);
   const [emails, setEmails] = useState([]);
@@ -130,7 +128,6 @@ function DriveSearch() {
   const [addingRow, setAddingRow] = useState(false);
   const [selectedRow, setSelectedRow] = useState(null);
   const [addRowMode, setAddRowMode] = useState('chinese'); // 'chinese' or 'time'
-  const [fileTypeToggle, setFileTypeToggle] = useState(false); // false = Docs, true = Sheets
   const [trashEmails, setTrashEmails] = useState([]); // emails dragged to trash board
   const [draggedEmail, setDraggedEmail] = useState(null); // currently dragged email id
   const dragStartXRef = React.useRef(null); // X position when drag started
@@ -144,6 +141,18 @@ function DriveSearch() {
   const tokenExpiryRef = React.useRef(null); // timestamp when current token expires
   const tokenResolveRef = React.useRef(null); // pending silent-refresh promise handlers
   const tokenPromiseRef = React.useRef(null); // in-flight silent-refresh promise
+
+  // Tree state
+  const [treeFolderId, setTreeFolderId] = useState('root');
+  const [treeFolderName, setTreeFolderName] = useState('My Drive');
+  const [treeBreadcrumb, setTreeBreadcrumb] = useState([]);
+  const [treeDepth, setTreeDepth] = useState(2);
+  const [treeLines, setTreeLines] = useState([]);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [treeSummary, setTreeSummary] = useState('');
+  const [treeFoldersOnly, setTreeFoldersOnly] = useState(false);
+  const [treeExclude, setTreeExclude] = useState('');
+  const [treeFolderSearch, setTreeFolderSearch] = useState('');
 
   useEffect(() => {
     const initClient = () => {
@@ -195,7 +204,6 @@ function DriveSearch() {
     if (accessToken) {
       window.google.accounts.oauth2.revoke(accessToken);
       setAccessToken(null);
-      setResults([]);
       setStatus('Signed out');
     }
     tokenExpiryRef.current = null;
@@ -224,37 +232,87 @@ function DriveSearch() {
     return tokenPromiseRef.current;
   }, [accessToken, tokenClient]);
 
-  const searchFiles = useCallback(async () => {
-    if (!searchQuery.trim() || !accessToken) return;
+  const listDriveFolder = useCallback(async (folderId) => {
+    const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+    let files = [];
+    let pageToken = '';
+    do {
+      const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name,mimeType)&orderBy=folder,name&pageSize=1000${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error?.message || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      files = files.concat(data.files || []);
+      pageToken = data.nextPageToken || '';
+    } while (pageToken);
+    return files.map((f) => ({
+      id: f.id,
+      name: f.name,
+      mimeType: f.mimeType,
+      isFolder: f.mimeType === 'application/vnd.google-apps.folder',
+    }));
+  }, [accessToken]);
 
-    setLoading(true);
-    setStatus('Searching...');
+  const loadTree = useCallback(async (folderId, folderName, breadcrumb, maxDepth) => {
+    if (!accessToken) return;
+    setTreeLoading(true);
+    setTreeLines([]);
+    setTreeSummary('');
+    setTreeFolderId(folderId);
+    setTreeFolderName(folderName);
+    setTreeBreadcrumb(breadcrumb);
+    setTreeFolderSearch('');
 
     try {
-      const mimeFilter = fileTypeToggle
-        ? `mimeType='application/vnd.google-apps.spreadsheet'`
-        : `mimeType='application/vnd.google-apps.document'`;
-      const query = encodeURIComponent(
-        `name contains '${searchQuery}' and trashed=false and ${mimeFilter}`
-      );
-      const response = await fetch(
-        `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name,mimeType)&orderBy=name`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
+      const buildNode = async (id, currentDepth) => {
+        setStatus(`Loading tree... (depth ${currentDepth}/${maxDepth})`);
+        const entries = await listDriveFolder(id);
+        const nodes = [];
+        for (const entry of entries) {
+          const node = { ...entry, children: [] };
+          if (entry.isFolder && currentDepth < maxDepth) {
+            try { node.children = await buildNode(entry.id, currentDepth + 1); } catch { /* show without children */ }
+          }
+          nodes.push(node);
         }
-      );
+        return nodes;
+      };
 
-      if (!response.ok) throw new Error('Search failed');
+      const tree = await buildNode(folderId, 1);
+      const lines = [];
+      let dirCount = 0;
+      let fileCount = 0;
 
-      const data = await response.json();
-      setResults(data.files || []);
-      setStatus(`Found ${data.files?.length || 0} files`);
+      const flatten = (nodes, prefix, ancestorPath) => {
+        nodes.forEach((node, index) => {
+          const isLast = index === nodes.length - 1;
+          const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251C\u2500\u2500 ';
+          const icon = node.isFolder ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
+          const driveUrl = node.isFolder
+            ? `https://drive.google.com/drive/folders/${node.id}`
+            : `https://drive.google.com/file/d/${node.id}/view`;
+          const fullPath = ancestorPath ? `${ancestorPath}/${node.name}` : node.name;
+          if (node.isFolder) dirCount++; else fileCount++;
+          lines.push({ prefix: prefix + connector, icon, name: node.name, fullPath, id: node.id, mimeType: node.mimeType, isFolder: node.isFolder, url: driveUrl });
+          if (node.children.length > 0) {
+            flatten(node.children, prefix + (isLast ? '    ' : '\u2502   '), fullPath);
+          }
+        });
+      };
+
+      flatten(tree, '', '');
+      setTreeLines(lines);
+      setTreeSummary(`${dirCount} directories, ${fileCount} files`);
+      setStatus(`Tree loaded: ${dirCount} directories, ${fileCount} files`);
     } catch (error) {
-      setStatus('Error: ' + error.message);
+      setStatus('Error loading tree: ' + error.message);
     } finally {
-      setLoading(false);
+      setTreeLoading(false);
     }
-  }, [searchQuery, accessToken, fileTypeToggle]);
+  }, [accessToken, listDriveFolder]);
+
 
   const handleFileClick = async (fileId, fileName, mimeType) => {
     if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s) for "${currentFileName}"?`)) return;
@@ -329,6 +387,16 @@ function DriveSearch() {
           setStatus(`"${fileName}" has ${workbook.SheetNames.length} sheets - pick one`);
           return;
         }
+      } else if (/\.docx$/i.test(fileName)) {
+        // Word files — download binary and convert with mammoth
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (!response.ok) throw new Error('Download failed');
+        const arrayBuffer = await response.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        content = result.value;
       } else {
         // Regular files - download content
         const response = await fetch(
@@ -355,11 +423,6 @@ function DriveSearch() {
     }
   };
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter') {
-      searchFiles();
-    }
-  };
 
   const pickSheet = (sheetName) => {
     const sheet = pendingWorkbook.Sheets[sheetName];
@@ -796,7 +859,11 @@ function DriveSearch() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (emailModal.open) {
+        if (fileContent) {
+          if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return;
+          setFileContent(''); setCurrentFileName(''); setCurrentFileId(''); setCurrentFileMimeType('');
+          setIsEditMode(false); setEditContent(''); setAppendNote(''); setPendingNotes([]); setShowRowInput(false);
+        } else if (emailModal.open) {
           setEmailModal(prev => ({ ...prev, open: false }));
         } else if (keepPillModal.open) {
           setKeepPillModal({ open: false, label: null });
@@ -809,7 +876,7 @@ function DriveSearch() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [emailModal.open, emailModal.email, keepPillModal.open, trashSingleEmail]);
+  }, [emailModal.open, emailModal.email, keepPillModal.open, trashSingleEmail, fileContent, pendingNotes.length]);
 
   // Open email modal and fetch body
   const openEmailModal = async (email, fromPillLabel = null) => {
@@ -1478,58 +1545,23 @@ function DriveSearch() {
         <>
           <div className="search-area">
             <div className="search-box">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Search file name..."
-                autoFocus
-              />
-              <button onClick={searchFiles} disabled={loading}>
-                {loading ? '...' : 'Search'}
-              </button>
               <button onClick={handleSignOut} className="sign-out-btn">
                 Sign Out
               </button>
             </div>
-            <div className="toggle-group">
-              <span className="toggle-label" style={{ color: !fileTypeToggle ? '#4285f4' : '#aaa' }}>Docs</span>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={fileTypeToggle}
-                  onChange={(e) => setFileTypeToggle(e.target.checked)}
-                />
-                <span className="slider"></span>
-              </label>
-              <span className="toggle-label" style={{ color: fileTypeToggle ? '#34a853' : '#aaa' }}>Sheets</span>
-              {emails.length > 0 && (
+            {emails.length > 0 && (
+              <div className="toggle-group">
                 <button onClick={cycleLabel} className="cycle-label-btn">
                   {selectedLabel} ({selectedLabel === 'All' ? emails.length : labelCounts[selectedLabel] || 0})
                 </button>
-              )}
-            </div>
-          </div>
-
-          <div className="results">
-            {results.map((file) => (
-              <div
-                key={file.id}
-                className="result-item"
-                onClick={() => handleFileClick(file.id, file.name, file.mimeType)}
-              >
-                <span className="file-icon">
-                  {file.mimeType.includes('folder') ? '📁' : '📄'}
-                </span>
-                <span className="file-name">{file.name}</span>
               </div>
-            ))}
+            )}
           </div>
 
           {status && <div className="status">{status}</div>}
 
           {fileContent && (
+            <div className="file-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return; setFileContent(''); setCurrentFileName(''); setCurrentFileId(''); setCurrentFileMimeType(''); setIsEditMode(false); setEditContent(''); setAppendNote(''); setPendingNotes([]); setShowRowInput(false); } }}>
             <div className="file-content-display">
               <div className="append-note-bar">
                 <input
@@ -1630,7 +1662,7 @@ function DriveSearch() {
                     </button>
                   )}
                   <button
-                    className="clear-btn"
+                    className="file-close-btn"
                     onClick={() => {
                       if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return;
                       setFileContent('');
@@ -1643,8 +1675,9 @@ function DriveSearch() {
                       setPendingNotes([]);
                       setShowRowInput(false);
                     }}
+                    title="Close"
                   >
-                    Clear
+                    &times;
                   </button>
                 </div>
               </div>
@@ -1683,6 +1716,196 @@ function DriveSearch() {
               ) : (
                 <pre>{fileContent}</pre>
               )}
+            </div>
+            </div>
+          )}
+
+          {/* ── Folder Tree ── */}
+          {accessToken && (
+            <div className="tree-container">
+              <div className="tree-controls">
+                <button
+                  className="tree-load-btn"
+                  onClick={() => loadTree('root', 'My Drive', [], treeDepth)}
+                  disabled={treeLoading}
+                >
+                  {treeLoading ? 'Loading...' : 'My Drive'}
+                </button>
+                <input
+                  type="text"
+                  className="tree-folder-search-input"
+                  value={treeFolderSearch}
+                  onChange={(e) => setTreeFolderSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Escape') setTreeFolderSearch(''); }}
+                  placeholder="Filter tree..."
+                />
+                <select
+                  className="tree-depth-select"
+                  value={treeDepth}
+                  onChange={(e) => setTreeDepth(Number(e.target.value))}
+                >
+                  <option value={1}>Depth 1</option>
+                  <option value={2}>Depth 2</option>
+                  <option value={3}>Depth 3</option>
+                </select>
+                <input
+                  type="text"
+                  className="tree-exclude-input"
+                  value={treeExclude}
+                  onChange={(e) => setTreeExclude(e.target.value)}
+                  placeholder="Exclude folder..."
+                />
+                <label className="tree-folders-only">
+                  <input
+                    type="checkbox"
+                    checked={treeFoldersOnly}
+                    onChange={(e) => setTreeFoldersOnly(e.target.checked)}
+                  />
+                  Folders only
+                </label>
+              </div>
+
+              {treeBreadcrumb.length > 0 && (
+                <div className="tree-breadcrumb">
+                  <button
+                    className="tree-action-btn tree-browse-btn"
+                    onClick={() => loadTree('root', 'My Drive', [], treeDepth)}
+                  >
+                    My Drive
+                  </button>
+                  {treeBreadcrumb.map((crumb, i) => (
+                    <span key={crumb.id}>
+                      {' / '}
+                      <button
+                        className="tree-action-btn tree-browse-btn"
+                        onClick={() => loadTree(crumb.id, crumb.name, treeBreadcrumb.slice(0, i), treeDepth)}
+                      >
+                        {crumb.name}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {treeLines.length > 0 && (
+                <div className="tree-download-row">
+                  <button
+                    className="tree-action-btn tree-download-btn"
+                    onClick={() => {
+                      const root = treeFolderName || 'My Drive';
+                      const textLines = [root];
+                      const excludeLower = treeExclude.trim().toLowerCase();
+                      treeLines.forEach((line) => {
+                        if (treeFoldersOnly && !line.isFolder) return;
+                        if (excludeLower && line.name.toLowerCase() === excludeLower) return;
+                        textLines.push(line.prefix + line.name);
+                      });
+                      const blob = new Blob([textLines.join('\n')], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `tree_${(treeFolderName || 'root').replace(/\s+/g, '_')}.txt`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    Download .txt
+                  </button>
+                </div>
+              )}
+
+              <div className="tree-output">
+                {treeFolderName && treeLines.length > 0 && (
+                  <div className="tree-root-line">{treeFolderName}</div>
+                )}
+                {(() => {
+                  const excludeLower = treeExclude.trim().toLowerCase();
+                  const filterLower = treeFolderSearch.trim().toLowerCase();
+                  const displayLines = treeLines.filter((line) => {
+                    if (treeFoldersOnly && !line.isFolder) return false;
+                    if (excludeLower && line.name.toLowerCase().includes(excludeLower)) return false;
+                    if (filterLower && !(line.fullPath || line.name).toLowerCase().includes(filterLower)) return false;
+                    return true;
+                  });
+                  const filteredDirCount = displayLines.filter((l) => l.isFolder).length;
+                  const filteredFileCount = displayLines.filter((l) => !l.isFolder).length;
+                  const isFiltered = excludeLower || treeFoldersOnly || filterLower;
+                  const displaySummary = isFiltered
+                    ? (treeFoldersOnly ? `${filteredDirCount} directories` : `${filteredDirCount} directories, ${filteredFileCount} files`)
+                    : treeSummary;
+                  return (
+                    <>
+                      {displayLines.map((line, idx) => (
+                        <div key={idx} className="tree-line">
+                          {!filterLower && <span className="tree-connector">{line.prefix}</span>}
+                          <span className="tree-icon">{line.icon}</span>
+                          <span className="tree-name-text" title={line.fullPath}>
+                            {filterLower ? line.fullPath : line.name}
+                          </span>
+                          {line.isFolder && (
+                            <button
+                              className="tree-action-btn tree-browse-btn"
+                              onClick={() => {
+                                const newCrumb = [...treeBreadcrumb, { id: treeFolderId, name: treeFolderName }];
+                                loadTree(line.id, line.name, newCrumb, treeDepth);
+                              }}
+                              title={`Browse ${line.name}`}
+                            >
+                              Browse
+                            </button>
+                          )}
+                          {line.isFolder ? (
+                            <a href={line.url} target="_blank" rel="noreferrer" className="tree-action-btn tree-open-btn" title="Open in Google Drive">
+                              Open
+                            </a>
+                          ) : (
+                            <button
+                              className="tree-action-btn tree-open-btn"
+                              onClick={() => handleFileClick(line.id, line.name, line.mimeType)}
+                              title={`View ${line.name}`}
+                            >
+                              Open
+                            </button>
+                          )}
+                          <button
+                            className="tree-action-btn tree-rename-btn"
+                            onClick={async () => {
+                              const newName = window.prompt('Rename to:', line.name);
+                              if (!newName || newName === line.name) return;
+                              try {
+                                const token = await ensureFreshToken();
+                                const res = await fetch(`https://www.googleapis.com/drive/v3/files/${line.id}`, {
+                                  method: 'PATCH',
+                                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ name: newName }),
+                                });
+                                if (!res.ok) {
+                                  const err = await res.json().catch(() => ({}));
+                                  setStatus('Rename failed: ' + (err.error?.message || `HTTP ${res.status}`));
+                                } else {
+                                  setStatus(`Renamed to: ${newName}`);
+                                  loadTree(treeFolderId, treeFolderName, treeBreadcrumb, treeDepth);
+                                }
+                              } catch (err) {
+                                setStatus('Rename error: ' + err.message);
+                              }
+                            }}
+                            title="Rename"
+                          >
+                            Rename
+                          </button>
+                        </div>
+                      ))}
+                      {displayLines.length > 0 && displaySummary && (
+                        <div className="tree-summary">{displaySummary}</div>
+                      )}
+                      {!treeLoading && treeLines.length === 0 && (
+                        <div className="tree-empty">Click "My Drive" to browse your folder tree.</div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
             </div>
           )}
 
