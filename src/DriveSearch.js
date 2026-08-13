@@ -1754,6 +1754,13 @@ function DriveSearch() {
                     </button>
                   )}
                   <button
+                    className="file-close-btn tree-dropbox-btn"
+                    onClick={() => sendToDropbox(currentFileId, currentFileName, currentFileMimeType)}
+                    title={dbxSignedIn ? 'Send to Dropbox clipboard' : 'Sign in to Dropbox and send'}
+                  >
+                    → DB
+                  </button>
+                  <button
                     className="file-close-btn"
                     onClick={() => {
                       if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return;
