@@ -116,7 +116,7 @@
 
             const verifier = generateCodeVerifier();
             const challenge = await generateCodeChallenge(verifier);
-            sessionStorage.setItem('dropbox_code_verifier', verifier);
+            localStorage.setItem('dropbox_code_verifier', verifier);
 
             const redirectUri = window.location.origin + window.location.pathname;
             const authUrl = 'https://www.dropbox.com/oauth2/authorize?client_id=' + appKey
@@ -147,7 +147,7 @@
             const code = params.get('code');
             if (!code) return;
 
-            const verifier = sessionStorage.getItem('dropbox_code_verifier');
+            const verifier = localStorage.getItem('dropbox_code_verifier');
             const appKey = await fetchDropboxAppKey();
             if (!verifier || !appKey) return;
             dropboxAppKey = appKey;
@@ -169,7 +169,7 @@
                 });
                 const data = await res.json();
                 if (data.access_token) {
-                    sessionStorage.removeItem('dropbox_code_verifier');
+                    localStorage.removeItem('dropbox_code_verifier');
                     if (window.opener && !window.opener.closed) {
                         // We're the popup — send token to parent and close
                         window.opener.postMessage(
