@@ -142,6 +142,9 @@ function DriveSearch() {
   const tokenResolveRef = React.useRef(null); // pending silent-refresh promise handlers
   const tokenPromiseRef = React.useRef(null); // in-flight silent-refresh promise
 
+  // Dropbox state
+  const [dbxSignedIn, setDbxSignedIn] = useState(false);
+
   // Tree state
   const [treeFolderId, setTreeFolderId] = useState('root');
   const [treeFolderName, setTreeFolderName] = useState('My Drive');
@@ -192,6 +195,24 @@ function DriveSearch() {
       }, 100);
       return () => clearInterval(checkGoogle);
     }
+  }, []);
+
+  // Check Dropbox token on mount (handles redirect-based fallback too)
+  useEffect(() => {
+    const check = async () => {
+      if (window._dropboxReady) await window._dropboxReady;
+      if (window.getDropboxAccessToken && window.getDropboxAccessToken()) {
+        setDbxSignedIn(true);
+      }
+    };
+    check();
+    // Listen for popup postMessage token
+    const handler = (e) => {
+      if (e.origin !== window.location.origin) return;
+      if (e.data && e.data.type === 'dropbox-token') setDbxSignedIn(true);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
   }, []);
 
   const handleSignIn = () => {
@@ -423,6 +444,77 @@ function DriveSearch() {
     }
   };
 
+
+  // Fetch file text without touching modal state — used for "→ DB" button
+  const fetchTextContent = async (fileId, fileName, mimeType) => {
+    if (mimeType === 'application/vnd.google-apps.spreadsheet') {
+      const exportMime = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportMime)}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error('Export failed');
+      const arrayBuffer = await res.arrayBuffer();
+      const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+      return XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+    } else if (mimeType.startsWith('application/vnd.google-apps')) {
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent('text/plain')}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error('Export failed');
+      const text = await res.text();
+      return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    } else if (/\.xlsx?$/i.test(fileName)) {
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error('Download failed');
+      const arrayBuffer = await res.arrayBuffer();
+      const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+      return XLSX.utils.sheet_to_csv(workbook.Sheets[workbook.SheetNames[0]]);
+    } else if (/\.docx$/i.test(fileName)) {
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error('Download failed');
+      const arrayBuffer = await res.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return result.value;
+    } else {
+      const res = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (!res.ok) throw new Error('Download failed');
+      return await res.text();
+    }
+  };
+
+  const DROPBOX_CLIPBOARD_PATH = '/blob_vercel_replacement/blob_clipboard_content.txt';
+
+  const sendToDropbox = async (fileId, fileName, mimeType) => {
+    const doUpload = async () => {
+      try {
+        setStatus(`Fetching "${fileName}"...`);
+        const content = await fetchTextContent(fileId, fileName, mimeType);
+        await window.dropboxUploadFile(DROPBOX_CLIPBOARD_PATH, content);
+        setDbxSignedIn(true);
+        setStatus(`Sent "${fileName}" → Dropbox`);
+      } catch (err) {
+        setStatus('Dropbox error: ' + err.message);
+      }
+    };
+
+    if (window.getDropboxAccessToken && window.getDropboxAccessToken()) {
+      doUpload();
+    } else {
+      setStatus('Opening Dropbox sign-in…');
+      window.dropboxSignInPopup(doUpload);
+    }
+  };
 
   const pickSheet = (sheetName) => {
     const sheet = pendingWorkbook.Sheets[sheetName];
@@ -1865,6 +1957,15 @@ function DriveSearch() {
                               title={`View ${line.name}`}
                             >
                               Open
+                            </button>
+                          )}
+                          {!line.isFolder && (
+                            <button
+                              className="tree-action-btn tree-dropbox-btn"
+                              onClick={() => sendToDropbox(line.id, line.name, line.mimeType)}
+                              title={dbxSignedIn ? `Send to Dropbox clipboard` : `Sign in to Dropbox and send`}
+                            >
+                              → DB
                             </button>
                           )}
                           <button

@@ -1838,6 +1838,9 @@ input:checked + .slider:before {
 .tree-rename-btn { border-color: #9c27b044; color: #ba68c8; }
 .tree-rename-btn:hover { background: #2a1a3a; border-color: #9c27b0; color: #ce93d8; }
 
+.tree-dropbox-btn { border-color: #0061ff44; color: #5b9cf6; }
+.tree-dropbox-btn:hover { background: #0c1a3a; border-color: #0061ff; color: #82b4ff; }
+
 .tree-download-btn { border-color: #61dafb44; color: #61dafb; }
 .tree-download-btn:hover { background: #0a2a3a; border-color: #61dafb; color: #a0e9ff; }
 
