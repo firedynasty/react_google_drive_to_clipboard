@@ -1915,7 +1915,21 @@ function DriveSearch() {
 
               <div className="tree-output">
                 {treeFolderName && treeLines.length > 0 && (
-                  <div className="tree-root-line">{treeFolderName}</div>
+                  <div className="tree-root-line">
+                    {treeBreadcrumb.length > 0 && (
+                      <button
+                        className="tree-up-btn"
+                        onClick={() => {
+                          const parent = treeBreadcrumb[treeBreadcrumb.length - 1];
+                          loadTree(parent.id, parent.name, treeBreadcrumb.slice(0, -1), treeDepth);
+                        }}
+                        title="Go up one directory"
+                      >
+                        &uarr; Up
+                      </button>
+                    )}
+                    {treeFolderName}
+                  </div>
                 )}
                 {(() => {
                   const excludeLower = treeExclude.trim().toLowerCase();
