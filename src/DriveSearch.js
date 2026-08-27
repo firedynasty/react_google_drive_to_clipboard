@@ -156,6 +156,7 @@ function DriveSearch() {
   const [treeFoldersOnly, setTreeFoldersOnly] = useState(false);
   const [treeExclude, setTreeExclude] = useState('');
   const [treeFolderSearch, setTreeFolderSearch] = useState('');
+  const [lastMoveFolderName, setLastMoveFolderName] = useState('');
 
   useEffect(() => {
     const initClient = () => {
@@ -306,7 +307,7 @@ function DriveSearch() {
       let dirCount = 0;
       let fileCount = 0;
 
-      const flatten = (nodes, prefix, ancestorPath) => {
+      const flatten = (nodes, prefix, ancestorPath, parentFolderId) => {
         nodes.forEach((node, index) => {
           const isLast = index === nodes.length - 1;
           const connector = isLast ? '\u2514\u2500\u2500 ' : '\u251C\u2500\u2500 ';
@@ -316,14 +317,14 @@ function DriveSearch() {
             : `https://drive.google.com/file/d/${node.id}/view`;
           const fullPath = ancestorPath ? `${ancestorPath}/${node.name}` : node.name;
           if (node.isFolder) dirCount++; else fileCount++;
-          lines.push({ prefix: prefix + connector, icon, name: node.name, fullPath, id: node.id, mimeType: node.mimeType, isFolder: node.isFolder, url: driveUrl });
+          lines.push({ prefix: prefix + connector, icon, name: node.name, fullPath, id: node.id, mimeType: node.mimeType, isFolder: node.isFolder, url: driveUrl, parentId: parentFolderId });
           if (node.children.length > 0) {
-            flatten(node.children, prefix + (isLast ? '    ' : '\u2502   '), fullPath);
+            flatten(node.children, prefix + (isLast ? '    ' : '\u2502   '), fullPath, node.id);
           }
         });
       };
 
-      flatten(tree, '', '');
+      flatten(tree, '', '', folderId);
       setTreeLines(lines);
       setTreeSummary(`${dirCount} directories, ${fileCount} files`);
       setStatus(`Tree loaded: ${dirCount} directories, ${fileCount} files`);
@@ -2015,6 +2016,76 @@ function DriveSearch() {
                             title="Rename"
                           >
                             Rename
+                          </button>
+                          <button
+                            className="tree-action-btn tree-move-btn"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const destName = window.prompt('Move to folder name (or type "delete" to trash):', lastMoveFolderName || '');
+                              if (!destName) return;
+
+                              if (destName.trim().toLowerCase() === 'delete') {
+                                if (!window.confirm(`Move "${line.name}" to trash?`)) return;
+                                try {
+                                  const token = await ensureFreshToken();
+                                  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${line.id}`, {
+                                    method: 'PATCH',
+                                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ trashed: true }),
+                                  });
+                                  if (!res.ok) {
+                                    const err = await res.json().catch(() => ({}));
+                                    setStatus('Trash failed: ' + (err.error?.message || `HTTP ${res.status}`));
+                                  } else {
+                                    setStatus(`Trashed: ${line.name}`);
+                                    loadTree(treeFolderId, treeFolderName, treeBreadcrumb, treeDepth);
+                                  }
+                                } catch (err) {
+                                  setStatus('Trash error: ' + err.message);
+                                }
+                                return;
+                              }
+
+                              try {
+                                const token = await ensureFreshToken();
+                                const q = encodeURIComponent(`name='${destName.trim().replace(/'/g, "\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+                                const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=5`, {
+                                  headers: { Authorization: `Bearer ${token}` },
+                                });
+                                if (!searchRes.ok) {
+                                  const err = await searchRes.json().catch(() => ({}));
+                                  setStatus('Folder search failed: ' + (err.error?.message || `HTTP ${searchRes.status}`));
+                                  return;
+                                }
+                                const searchData = await searchRes.json();
+                                if (!searchData.files || searchData.files.length === 0) {
+                                  setStatus(`No folder named "${destName.trim()}" found.`);
+                                  return;
+                                }
+                                const destFolder = searchData.files[0];
+                                const moveRes = await fetch(
+                                  `https://www.googleapis.com/drive/v3/files/${line.id}?addParents=${destFolder.id}&removeParents=${line.parentId}&fields=id,name`,
+                                  {
+                                    method: 'PATCH',
+                                    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({}),
+                                  }
+                                );
+                                if (!moveRes.ok) {
+                                  const err = await moveRes.json().catch(() => ({}));
+                                  setStatus('Move failed: ' + (err.error?.message || `HTTP ${moveRes.status}`));
+                                } else {
+                                  setLastMoveFolderName(destName.trim());
+                                  setStatus(`Moved "${line.name}" to "${destFolder.name}"`);
+                                  loadTree(treeFolderId, treeFolderName, treeBreadcrumb, treeDepth);
+                                }
+                              } catch (err) {
+                                setStatus('Move error: ' + err.message);
+                              }
+                            }}
+                            title='Move (or type "delete" to trash)'
+                          >
+                            Move
                           </button>
                         </div>
                       ))}
