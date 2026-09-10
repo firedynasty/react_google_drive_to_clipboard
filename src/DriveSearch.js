@@ -157,6 +157,9 @@ function DriveSearch() {
   const [treeExclude, setTreeExclude] = useState('');
   const [treeFolderSearch, setTreeFolderSearch] = useState('');
   const [lastMoveFolderName, setLastMoveFolderName] = useState('');
+  const [recentFiles, setRecentFiles] = useState([]);
+  const [recentOpen, setRecentOpen] = useState(false);
+  const [recentLoading, setRecentLoading] = useState(false);
 
   useEffect(() => {
     const initClient = () => {
@@ -335,6 +338,26 @@ function DriveSearch() {
     }
   }, [accessToken, listDriveFolder]);
 
+
+  const fetchRecentFiles = useCallback(async () => {
+    if (!accessToken) return;
+    setRecentLoading(true);
+    try {
+      const q = encodeURIComponent(
+        "(mimeType='application/vnd.google-apps.spreadsheet' or mimeType='application/vnd.google-apps.document') and trashed=false"
+      );
+      const fields = 'files(id,name,mimeType,viewedByMeTime,modifiedByMeTime)';
+      const url = `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=viewedByMeTime+desc&pageSize=10&fields=${fields}`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+      const data = await res.json();
+      setRecentFiles(data.files ?? []);
+      setRecentOpen(true);
+    } catch (e) {
+      setStatus('Error fetching recent files: ' + e.message);
+    } finally {
+      setRecentLoading(false);
+    }
+  }, [accessToken]);
 
   const handleFileClick = async (fileId, fileName, mimeType) => {
     if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s) for "${currentFileName}"?`)) return;
@@ -1831,6 +1854,35 @@ function DriveSearch() {
                 >
                   {treeLoading ? 'Loading...' : 'My Drive'}
                 </button>
+                <div className="tree-recent-wrapper">
+                  <button
+                    className="tree-load-btn tree-recent-btn"
+                    onClick={() => recentOpen ? setRecentOpen(false) : fetchRecentFiles()}
+                    disabled={recentLoading}
+                  >
+                    {recentLoading ? 'Loading...' : 'Recent ▾'}
+                  </button>
+                  {recentOpen && recentFiles.length > 0 && (
+                    <div className="tree-recent-dropdown">
+                      {recentFiles.map((f) => (
+                        <button
+                          key={f.id}
+                          className="tree-recent-item"
+                          onClick={() => {
+                            setRecentOpen(false);
+                            handleFileClick(f.id, f.name, f.mimeType);
+                          }}
+                          title={f.name}
+                        >
+                          <span className="tree-recent-icon">
+                            {f.mimeType === 'application/vnd.google-apps.spreadsheet' ? '📊' : '📄'}
+                          </span>
+                          <span className="tree-recent-name">{f.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input
                   type="text"
                   className="tree-folder-search-input"
