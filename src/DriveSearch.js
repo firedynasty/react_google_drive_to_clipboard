@@ -79,6 +79,64 @@ function parseCsv(text) {
   return result;
 }
 
+// Convert "HH:MM:SS" / "MM:SS" / plain seconds into a total-seconds integer.
+function timeStrToSeconds(str) {
+  const parts = str.trim().split(':').map((x) => parseInt(x, 10) || 0);
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return parts[0] || 0;
+}
+
+// Add (or replace) the &t=<seconds> param on a YouTube URL.
+function addTimestampToUrl(url, seconds) {
+  const qIdx = url.indexOf('?');
+  const base = qIdx > -1 ? url.slice(0, qIdx) : url;
+  const qs = qIdx > -1 ? url.slice(qIdx + 1) : '';
+  const params = qs.split('&').filter((p) => p && !p.startsWith('t='));
+  params.push('t=' + seconds);
+  return base + '?' + params.join('&');
+}
+
+const YOUTUBE_URL_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?|youtu\.be\/)/i;
+const TIMESTAMP_LINE_RE = /^(\d{1,2}:)?\d{1,2}:\d{2}$/;
+
+// Clean up pasted notes: collapse runs of blank lines down to a single
+// blank line (\n\n), and fold a bare timestamp line ("2:54") sitting under
+// a YouTube URL into that URL's &t= param — same math as the old copy-URL
+// bookmarklet.
+function formatNotesContent(text) {
+  const lines = text.replace(/\n{2,}/g, '\n\n').split('\n');
+  const merged = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (YOUTUBE_URL_RE.test(line)) {
+      // The timestamp may sit right below the URL, or one blank line down —
+      // either way it's still "underneath" the link.
+      let j = i + 1;
+      if (lines[j] !== undefined && lines[j].trim() === '') j++;
+      const candidate = lines[j] !== undefined ? lines[j].trim() : '';
+      if (TIMESTAMP_LINE_RE.test(candidate)) {
+        merged.push(addTimestampToUrl(line, timeStrToSeconds(candidate)));
+        i = j; // consume through the timestamp line (and any blank line before it)
+        continue;
+      }
+    }
+    merged.push(lines[i]);
+  }
+  // A YouTube URL line marks the end of a note entry — make sure one blank
+  // line separates it from whatever comes next, even if the raw notes had
+  // no spacing between entries at all.
+  const out = [];
+  for (let i = 0; i < merged.length; i++) {
+    out.push(merged[i]);
+    const next = merged[i + 1];
+    if (YOUTUBE_URL_RE.test(merged[i].trim()) && next !== undefined && next.trim() !== '') {
+      out.push('');
+    }
+  }
+  return out.join('\n');
+}
+
 function DriveSearch() {
   const [accessToken, setAccessToken] = useState(null);
   const [status, setStatus] = useState('');
@@ -668,13 +726,32 @@ function DriveSearch() {
         });
       }
       if (contentToSave) {
+        // Strip \r — the Docs API treats it as an extra paragraph break
+        const normalizedText = contentToSave.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         requests.push({
           insertText: {
             location: { index: 1 },
-            // Strip \r — the Docs API treats it as an extra paragraph break
-            text: contentToSave.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+            text: normalizedText
           }
         });
+
+        // insertText only inserts plain text — it does not auto-link URLs the
+        // way typing into the Docs UI does, so every link would otherwise
+        // paste back in unclickable. Re-apply link styling to each URL,
+        // using indices relative to the text just inserted above.
+        const urlRe = /https?:\/\/\S+/g;
+        let match;
+        while ((match = urlRe.exec(normalizedText)) !== null) {
+          const startIndex = 1 + match.index;
+          const endIndex = startIndex + match[0].length;
+          requests.push({
+            updateTextStyle: {
+              range: { startIndex, endIndex },
+              textStyle: { link: { url: match[0] } },
+              fields: 'link',
+            }
+          });
+        }
       }
 
       const updateResp = await fetch(
@@ -1761,12 +1838,27 @@ function DriveSearch() {
                       Add Row
                     </button>
                   ) : (
-                    <button
-                      className="edit-btn"
-                      onClick={toggleEditMode}
-                    >
-                      {isEditMode ? 'View' : 'Edit'}
-                    </button>
+                    <>
+                      <button
+                        className="edit-btn format-btn"
+                        onClick={() => {
+                          const source = isEditMode ? editContent : fileContent;
+                          const formatted = formatNotesContent(source);
+                          setEditContent(formatted);
+                          setIsEditMode(true);
+                          setStatus(formatted === source ? 'Nothing to clean up' : 'Formatted — review, then Save');
+                        }}
+                        title="Collapse blank lines and fold timestamp lines into the YouTube URL above them"
+                      >
+                        Format YT URL
+                      </button>
+                      <button
+                        className="edit-btn"
+                        onClick={toggleEditMode}
+                      >
+                        {isEditMode ? 'View' : 'Edit'}
+                      </button>
+                    </>
                   )}
                   {isEditMode && (
                     <button
