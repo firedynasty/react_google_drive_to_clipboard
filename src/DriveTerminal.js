@@ -19,6 +19,7 @@ const DEFAULT_ALIASES = {
   cat: 'open',
   opens: "open -a 'google chrome'",
   '..': 'cd ..',
+  trees: `echo 'tree -d -L 2 -I "node_modules"'`,
 };
 
 const HELP = [
@@ -35,6 +36,7 @@ const HELP = [
   'mkdir <name>          create a folder',
   'recent                10 most recently viewed Docs/Sheets (numbered)',
   'find <text>           search all of Drive by name (numbered)',
+  'tree [-d] [-L N] [-I "a|b*"] [path]   folder tree (default depth 2, max 6)',
   'echo <text>           print text',
   'clear                 clear the screen (also Ctrl+L)',
   '',
@@ -46,6 +48,7 @@ const HELP = [
   '        e.g.  pwd | pbcopy     dir | grep -i chess | pbcopy',
   '',
   'Tab completes names, ↑/↓ walk history, # refers to the last recent/find list.',
+  'Anywhere a name goes you can paste a Drive link:  mv notes https://drive.google.com/drive/folders/…',
 ];
 
 const loadJSON = (key, fallback) => {
@@ -137,7 +140,10 @@ const driveUrl = (f) => {
   return `https://drive.google.com/file/d/${f.id}/view`;
 };
 
-const pathString = (cwd) => (cwd.length === 1 ? '~' : '~/' + cwd.slice(1).map((c) => c.name).join('/'));
+const pathString = (cwd) => {
+  if (cwd[0]?.id !== 'root') return '/' + cwd.map((c) => c.name).join('/'); // e.g. a shared folder outside My Drive
+  return cwd.length === 1 ? '~' : '~/' + cwd.slice(1).map((c) => c.name).join('/');
+};
 
 const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, modalOpen = false }) => {
   const [cwd, setCwd] = useState(() => loadJSON(CWD_KEY, ROOT));
@@ -213,18 +219,32 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
 
   const invalidate = (...folderIds) => folderIds.forEach((id) => cacheRef.current.delete(id));
 
-  const findChild = (entries, name) =>
-    entries.find((e) => e.name === name) || entries.find((e) => e.name.toLowerCase() === name.toLowerCase());
+  // Exact name first, then case-insensitive. When a file and a folder share the name, `prefer` picks.
+  const findChild = (entries, name, prefer) => {
+    const exact = entries.filter((e) => e.name === name);
+    const pool = exact.length ? exact : entries.filter((e) => e.name.toLowerCase() === name.toLowerCase());
+    const isWanted = (e) => (prefer === 'folder') === (e.mimeType === FOLDER_MIME);
+    return pool.find(isWanted) || pool[0];
+  };
 
   // Resolve a path to { stack, entry } where stack is the folder chain containing entry.
   // For folders, entry is the folder itself; stack then ends at its parent.
-  const resolve = useCallback(async (path, base = cwd) => {
+  // Same-name clash: "name/" (or prefer='folder', as cd does) means the folder, plain "name" the file.
+  const resolve = useCallback(async (path, prefer) => {
+    const want = prefer || (path.endsWith('/') ? 'folder' : 'file');
     if (/^#\d+$/.test(path)) {
       const f = numberedRef.current[parseInt(path.slice(1), 10) - 1];
       if (!f) throw new Error(`${path}: no such entry in the last recent/find list`);
       return { stack: null, entry: f };
     }
-    let stack = path.startsWith('/') || path === '~' || path.startsWith('~/') ? [...ROOT] : [...base];
+    // A pasted Drive/Docs link (…/folders/ID, …/d/ID/…, ?id=ID) resolves straight to that item.
+    const urlId = path.match(/^https?:\/\/(?:drive|docs)\.google\.com\/.*?(?:\/folders\/|\/d\/|[?&]id=)([\w-]{10,})/)?.[1];
+    if (urlId) {
+      const f = await api(`https://www.googleapis.com/drive/v3/files/${urlId}?fields=id,name,mimeType,parents,trashed&supportsAllDrives=true`);
+      if (f.trashed) throw new Error(`${f.name}: is in the trash`);
+      return { stack: null, entry: f };
+    }
+    let stack = path.startsWith('/') || path === '~' || path.startsWith('~/') ? [...ROOT] : [...cwd];
     const parts = path.replace(/^~/, '').split('/').filter((p) => p && p !== '.');
     if (parts.length === 0) return { stack: stack.slice(0, -1), entry: { ...stack[stack.length - 1], mimeType: FOLDER_MIME } };
     for (let i = 0; i < parts.length; i++) {
@@ -238,31 +258,36 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       }
       const dir = stack[stack.length - 1];
       const entries = await listFolder(dir.id);
-      const child = findChild(entries, part);
+      const last = i === parts.length - 1;
+      const child = findChild(entries, part, last ? want : 'folder');
       if (!child) throw new Error(`${path}: No such file or folder`);
       if (i === parts.length - 1) return { stack, entry: child };
       if (child.mimeType !== FOLDER_MIME) throw new Error(`${path}: Not a folder`);
       stack = [...stack, { id: child.id, name: child.name }];
     }
     return null;
-  }, [cwd, listFolder]);
+  }, [cwd, listFolder, api]);
 
-  // Full path for an item found by id (recent/find results): walk up its parents to My Drive.
-  const pathFromParents = async (entry) => {
-    const names = [entry.name];
+  // Folder chain above an item found by id (links, recent/find results), as a cwd-style stack.
+  const ancestorsOf = async (entry) => {
+    const chain = [];
     let parentId = entry.parents?.[0];
     for (let depth = 0; parentId && depth < 30; depth++) {
       const p = await api(`https://www.googleapis.com/drive/v3/files/${parentId}?fields=id,name,parents`);
-      names.unshift(p.name); // the top folder comes back as "My Drive"
+      // The top of My Drive comes back as "My Drive" with no parents; use the 'root' alias like cwd does.
+      chain.unshift(!p.parents && p.name === 'My Drive' ? ROOT[0] : { id: p.id, name: p.name });
       parentId = p.parents?.[0];
     }
-    return '/' + names.join('/');
+    return chain;
   };
 
+  const pathFromParents = async (entry) =>
+    '/' + [...(await ancestorsOf(entry)).map((s) => s.name), entry.name].join('/');
+
   // For open/web: a bare number means "#N from the last list" unless something here is named that.
-  const resolveTarget = async (arg) => {
+  const resolveTarget = async (arg, prefer) => {
     try {
-      return await resolve(arg);
+      return await resolve(arg, prefer);
     } catch (e) {
       if (/^\d+$/.test(arg) && numberedRef.current.length) return resolve('#' + arg);
       throw e;
@@ -301,7 +326,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
         return;
       }
       for (const p of paths) {
-        const { entry } = await resolve(p);
+        const { entry } = await resolve(p, 'folder');
         if (entry.mimeType === FOLDER_MIME) {
           if (paths.length > 1) print('out', `${p}:`);
           printListing(await listFolder(entry.id, { fresh: true }), long);
@@ -313,23 +338,24 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
 
     cd: async (args) => {
       const target = args[0];
-      if (!target || target === '~' || target === '/') { setCwd(ROOT); return; }
-      const { stack, entry } = await resolve(target);
-      if (entry.mimeType !== FOLDER_MIME) throw new Error(`cd: ${target}: Not a folder`);
-      if (!stack) throw new Error('cd: numbered results are not folder paths — use the folder name');
-      setCwd([...stack, { id: entry.id, name: entry.name }]);
+      let next = ROOT;
+      if (target && target !== '~' && target !== '/') {
+        const { stack, entry } = await resolveTarget(target, 'folder');
+        if (entry.mimeType !== FOLDER_MIME) throw new Error(`cd: ${target}: Not a folder`);
+        const above = stack || (await ancestorsOf(entry));
+        next = [...above, { id: entry.id, name: entry.name }];
+      }
+      setCwd(next);
+      // Auto-ls after every cd (like a zsh chpwd hook).
+      printListing(await listFolder(next[next.length - 1].id, { fresh: true }), false);
     },
 
     open: async (args) => {
       // macOS style: open -a "Google Chrome" <name>  → new browser tab (any app name works)
       if (args[0] === '-a') return commands.web(args.slice(2));
       if (!args[0]) throw new Error('usage: open <name|#>   or   open -a chrome <name>');
-      const { stack, entry } = await resolveTarget(args[0]);
-      if (entry.mimeType === FOLDER_MIME) {
-        if (stack) setCwd([...stack, { id: entry.id, name: entry.name }]);
-        else window.open(driveUrl(entry), '_blank', 'noopener');
-        return;
-      }
+      const { entry } = await resolveTarget(args[0]);
+      if (entry.mimeType === FOLDER_MIME) return commands.cd([args[0]]);
       print('out', `Opening ${entry.name}...`);
       openFile(entry.id, entry.name, entry.mimeType);
     },
@@ -389,7 +415,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       const sources = args.slice(0, -1);
       let destFolder = null;
       try {
-        const { entry } = await resolve(destPath);
+        const { entry } = await resolve(destPath, 'folder');
         if (entry.mimeType === FOLDER_MIME) destFolder = entry;
         else throw new Error(`mv: ${destPath} already exists`);
       } catch (e) {
@@ -420,7 +446,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       let url = `https://www.googleapis.com/drive/v3/files/${entry.id}?fields=id`;
       let toId = fromId;
       if (slash >= 0) {
-        const { entry: parent } = await resolve(destPath.slice(0, slash) || '/');
+        const { entry: parent } = await resolve(destPath.slice(0, slash) || '/', 'folder');
         if (parent.mimeType !== FOLDER_MIME) throw new Error(`mv: ${destPath}: Not a folder`);
         toId = parent.id;
         if (toId !== fromId) url += `&addParents=${toId}&removeParents=${fromId}`;
@@ -438,7 +464,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       let name = `Copy of ${entry.name}`;
       if (args[1]) {
         try {
-          const { entry: dest } = await resolve(args[1]);
+          const { entry: dest } = await resolve(args[1], 'folder');
           if (dest.mimeType !== FOLDER_MIME) throw new Error(`cp: ${args[1]} already exists`);
           parentId = dest.id;
           name = entry.name;
@@ -453,6 +479,70 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       });
       invalidate(parentId);
       print('out', `copied ${entry.name} → ${name}`);
+    },
+
+    // tree [-d] [-L N] [-I "pat|pat"] [path]  — like the Unix tree; depth defaults to 2 to keep API calls down.
+    tree: async (args) => {
+      let dirsOnly = false;
+      let maxDepth = 2;
+      let ignore = null;
+      let target = null;
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '-d') dirsOnly = true;
+        else if (a === '-L') maxDepth = parseInt(args[++i], 10);
+        else if (a === '-I') ignore = args[++i];
+        else if (/^-[dL]+\d*$/.test(a)) { // combined forms like -dL2
+          if (a.includes('d')) dirsOnly = true;
+          const n = a.match(/L(\d+)/)?.[1];
+          if (n) maxDepth = parseInt(n, 10);
+          else if (a.includes('L')) maxDepth = parseInt(args[++i], 10);
+        } else target = a;
+      }
+      if (!Number.isInteger(maxDepth) || maxDepth < 1) throw new Error('tree: -L needs a number ≥ 1');
+      if (maxDepth > 6) throw new Error('tree: -L is capped at 6 (each level is more Drive API calls)');
+      // -I uses tree's glob syntax: * and ? wildcards, | between patterns.
+      const ignoreRe = ignore
+        ? new RegExp('^(?:' + ignore.split('|').map((p) =>
+          p.replace(/[.+^${}()[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')).join('|') + ')$', 'i')
+        : null;
+
+      let root = { ...cwd[cwd.length - 1], mimeType: FOLDER_MIME };
+      if (target) {
+        root = (await resolveTarget(target, 'folder')).entry;
+        if (root.mimeType !== FOLDER_MIME) throw new Error(`tree: ${target}: Not a folder`);
+      }
+
+      // Fetch level by level, listing sibling folders in parallel.
+      const keep = (e) => (!dirsOnly || e.mimeType === FOLDER_MIME) && !(ignoreRe && ignoreRe.test(e.name));
+      const children = new Map();
+      let frontier = [root.id];
+      for (let depth = 1; depth <= maxDepth && frontier.length; depth++) {
+        const lists = await Promise.all(frontier.map((id) => listFolder(id, { fresh: true }).catch(() => [])));
+        const next = [];
+        frontier.forEach((id, i) => {
+          const kept = lists[i].filter(keep);
+          children.set(id, kept);
+          kept.forEach((e) => { if (e.mimeType === FOLDER_MIME) next.push(e.id); });
+        });
+        frontier = next;
+      }
+
+      let dirs = 0;
+      let files = 0;
+      print('entry', '', { file: root });
+      const walk = (id, prefix) => {
+        const kids = children.get(id) || [];
+        kids.forEach((e, i) => {
+          const last = i === kids.length - 1;
+          if (e.mimeType === FOLDER_MIME) dirs++; else files++;
+          print('entry', prefix + (last ? '└── ' : '├── '), { file: e });
+          walk(e.id, prefix + (last ? '    ' : '│   '));
+        });
+      };
+      walk(root.id, '');
+      print('out', '');
+      print('out', `${dirs} director${dirs === 1 ? 'y' : 'ies'}${dirsOnly ? '' : `, ${files} file${files === 1 ? '' : 's'}`}`);
     },
 
     recent: async () => {
@@ -597,7 +687,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     try {
       let dirId = cwd[cwd.length - 1].id;
       if (dirPart) {
-        const { entry } = await resolve(dirPart === '/' ? '/' : dirPart.replace(/\/$/, ''));
+        const { entry } = await resolve(dirPart === '/' ? '/' : dirPart.replace(/\/$/, ''), 'folder');
         if (entry.mimeType !== FOLDER_MIME) return;
         dirId = entry.id;
       }
