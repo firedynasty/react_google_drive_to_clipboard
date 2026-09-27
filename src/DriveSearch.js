@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
+import DriveTerminal from './DriveTerminal';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
@@ -218,6 +219,12 @@ function DriveSearch() {
   const [recentFiles, setRecentFiles] = useState([]);
   const [recentOpen, setRecentOpen] = useState(false);
   const [recentLoading, setRecentLoading] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(() => {
+    try { return localStorage.getItem('driveTerminal.open') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('driveTerminal.open', terminalOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+  }, [terminalOpen]);
 
   useEffect(() => {
     const initClient = () => {
@@ -1975,6 +1982,13 @@ function DriveSearch() {
                     </div>
                   )}
                 </div>
+                <button
+                  className={`tree-load-btn tree-terminal-btn${terminalOpen ? ' active' : ''}`}
+                  onClick={() => setTerminalOpen((o) => !o)}
+                  title="Bash-style shell for Drive (cd, ls, mv, rm, open...)"
+                >
+                  &gt;_ Terminal
+                </button>
                 <input
                   type="text"
                   className="tree-folder-search-input"
@@ -2007,6 +2021,17 @@ function DriveSearch() {
                   />
                   Folders only
                 </label>
+              </div>
+
+              {/* Hidden rather than unmounted so scrollback and state survive closing */}
+              <div style={{ display: terminalOpen ? 'block' : 'none' }}>
+                <DriveTerminal
+                  ensureFreshToken={ensureFreshToken}
+                  openFile={handleFileClick}
+                  onClose={() => setTerminalOpen(false)}
+                  visible={terminalOpen}
+                  modalOpen={!!fileContent}
+                />
               </div>
 
               {treeBreadcrumb.length > 0 && (

@@ -15,3 +15,5 @@
 # Misc
 .DS_Store
 *.log
+.vercel
+.env*
