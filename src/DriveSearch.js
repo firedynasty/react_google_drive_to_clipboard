@@ -101,6 +101,15 @@ function addTimestampToUrl(url, seconds) {
 const YOUTUBE_URL_RE = /^https?:\/\/(www\.)?(youtube\.com\/watch\?|youtu\.be\/)/i;
 const TIMESTAMP_LINE_RE = /^(\d{1,2}:)?\d{1,2}:\d{2}$/;
 
+// Same URL scheme the Drive terminal's "open -a chrome" uses to open a file
+// in its native Google Drive/Docs editor.
+function driveFileUrl(fileId, mimeType) {
+  if (mimeType === 'application/vnd.google-apps.document') return `https://docs.google.com/document/d/${fileId}/edit`;
+  if (mimeType === 'application/vnd.google-apps.spreadsheet') return `https://docs.google.com/spreadsheets/d/${fileId}/edit`;
+  if (mimeType === 'application/vnd.google-apps.presentation') return `https://docs.google.com/presentation/d/${fileId}/edit`;
+  return `https://drive.google.com/file/d/${fileId}/view`;
+}
+
 // Clean up pasted notes: collapse runs of blank lines down to a single
 // blank line (\n\n), and fold a bare timestamp line ("2:54") sitting under
 // a YouTube URL into that URL's &t= param — same math as the old copy-URL
@@ -156,6 +165,8 @@ function DriveSearch() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [saving, setSaving] = useState(false);
+  const [fileFormatted, setFileFormatted] = useState(false); // TXT>MD toggle for the file modal
+  const [fileFontSize, setFileFontSize] = useState(18);
   const [emailModal, setEmailModal] = useState({ open: false, email: null, body: '', loading: false, fromPillLabel: null });
   const [gmailLabels, setGmailLabels] = useState([]);
   const [selectedGmailLabel, setSelectedGmailLabel] = useState('');
@@ -177,6 +188,7 @@ function DriveSearch() {
   const [pendingNotes, setPendingNotes] = useState([]); // queued notes not yet saved to Drive
   const [savingNotes, setSavingNotes] = useState(false);
   const appendInputRef = React.useRef(null); // quick-note input, refocused after each Add
+  const contentScrollRef = React.useRef(null); // file modal's scrollable content (pre/formatted/textarea), for the page-down button
   const [showRowInput, setShowRowInput] = useState(false);
   const [newChinese, setNewChinese] = useState('');
   const [newPinyin, setNewPinyin] = useState('');
@@ -225,6 +237,14 @@ function DriveSearch() {
   useEffect(() => {
     try { localStorage.setItem('driveTerminal.open', terminalOpen ? '1' : '0'); } catch { /* storage unavailable */ }
   }, [terminalOpen]);
+
+  // Light/dark theme for the file modal and terminal (persists across visits).
+  const [uiTheme, setUiTheme] = useState(() => {
+    try { return localStorage.getItem('driveUiTheme') || 'dark'; } catch { return 'dark'; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('driveUiTheme', uiTheme); } catch { /* storage unavailable */ }
+  }, [uiTheme]);
 
   useEffect(() => {
     const initClient = () => {
@@ -524,6 +544,7 @@ function DriveSearch() {
       setCurrentFileId(fileId);
       setCurrentFileMimeType(mimeType);
       setIsEditMode(false);
+      setFileFormatted(false);
       setEditContent('');
       setAppendNote('');
       setPendingNotes([]);
@@ -624,18 +645,6 @@ function DriveSearch() {
     setPendingFileMimeType('');
     setSheetNames([]);
     setStatus(`Loaded sheet "${sheetName}"`);
-  };
-
-  const toggleEditMode = () => {
-    if (!isEditMode) {
-      // Switch to Edit mode
-      setEditContent(fileContent);
-      setIsEditMode(true);
-    } else {
-      // Switch to View mode - apply edits
-      setFileContent(editContent);
-      setIsEditMode(false);
-    }
   };
 
   // Writes content to Google Drive using the API appropriate for the file type.
@@ -1734,7 +1743,7 @@ function DriveSearch() {
   }
 
   return (
-    <div className="drive-search">
+    <div className="drive-search" data-theme={uiTheme}>
       <h1>Drive Search</h1>
 
       {!accessToken ? (
@@ -1761,7 +1770,7 @@ function DriveSearch() {
           {status && <div className="status">{status}</div>}
 
           {fileContent && (
-            <div className="file-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return; setFileContent(''); setCurrentFileName(''); setCurrentFileId(''); setCurrentFileMimeType(''); setIsEditMode(false); setEditContent(''); setAppendNote(''); setPendingNotes([]); setShowRowInput(false); } }}>
+            <div className="file-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return; setFileContent(''); setCurrentFileName(''); setCurrentFileId(''); setCurrentFileMimeType(''); setIsEditMode(false); setEditContent(''); setAppendNote(''); setPendingNotes([]); setShowRowInput(false); setFileFormatted(false); } }}>
             <div className="file-content-display">
               <div className="append-note-bar">
                 <input
@@ -1810,14 +1819,39 @@ function DriveSearch() {
                 <div className="content-actions">
                   <button
                     className="copy-btn"
-                    onClick={async () => {
-                      const contentToCopy = isEditMode ? editContent : fileContent;
-                      await navigator.clipboard.writeText(contentToCopy);
-                      setStatus(`Copied "${currentFileName}" to clipboard`);
+                    onClick={() => {
+                      window.open(driveFileUrl(currentFileId, currentFileMimeType), '_blank', 'noopener');
                     }}
+                    title="Open this file in Google Drive/Docs in a new tab"
                   >
-                    Copy
+                    Goto
                   </button>
+                  {currentFileMimeType !== 'application/vnd.google-apps.spreadsheet' && !isEditMode && (
+                    <>
+                      <button
+                        className="font-size-btn"
+                        onClick={() => setFileFontSize((s) => Math.max(10, s - 1))}
+                        title="Decrease font size"
+                      >
+                        −
+                      </button>
+                      <span className="font-size-label">{fileFontSize}px</span>
+                      <button
+                        className="font-size-btn"
+                        onClick={() => setFileFontSize((s) => Math.min(24, s + 1))}
+                        title="Increase font size"
+                      >
+                        +
+                      </button>
+                      <button
+                        className={`txt-md-toggle-btn${fileFormatted ? ' active' : ''}`}
+                        onClick={() => setFileFormatted((f) => !f)}
+                        title="Toggle formatted view (bullets * lines, auto-link, paragraphs)"
+                      >
+                        TXT&gt;MD
+                      </button>
+                    </>
+                  )}
                   {currentFileMimeType === 'application/vnd.google-apps.spreadsheet' ? (
                     <button
                       className="edit-btn"
@@ -1845,27 +1879,19 @@ function DriveSearch() {
                       Add Row
                     </button>
                   ) : (
-                    <>
-                      <button
-                        className="edit-btn format-btn"
-                        onClick={() => {
-                          const source = isEditMode ? editContent : fileContent;
-                          const formatted = formatNotesContent(source);
-                          setEditContent(formatted);
-                          setIsEditMode(true);
-                          setStatus(formatted === source ? 'Nothing to clean up' : 'Formatted — review, then Save');
-                        }}
-                        title="Collapse blank lines and fold timestamp lines into the YouTube URL above them"
-                      >
-                        Format YT URL
-                      </button>
-                      <button
-                        className="edit-btn"
-                        onClick={toggleEditMode}
-                      >
-                        {isEditMode ? 'View' : 'Edit'}
-                      </button>
-                    </>
+                    <button
+                      className="edit-btn format-btn"
+                      onClick={() => {
+                        const source = isEditMode ? editContent : fileContent;
+                        const formatted = formatNotesContent(source);
+                        setEditContent(formatted);
+                        setIsEditMode(true);
+                        setStatus(formatted === source ? 'Nothing to clean up' : 'Formatted — review, then Save');
+                      }}
+                      title="Collapse blank lines and fold timestamp lines into the YouTube URL above them"
+                    >
+                      Format YT URL
+                    </button>
                   )}
                   {isEditMode && (
                     <button
@@ -1896,6 +1922,7 @@ function DriveSearch() {
                       setAppendNote('');
                       setPendingNotes([]);
                       setShowRowInput(false);
+                      setFileFormatted(false);
                     }}
                     title="Close"
                   >
@@ -1905,7 +1932,9 @@ function DriveSearch() {
               </div>
               {isEditMode ? (
                 <textarea
+                  ref={contentScrollRef}
                   className="edit-textarea"
+                  style={{ fontSize: `${fileFontSize}px` }}
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
                 />
@@ -1935,8 +1964,30 @@ function DriveSearch() {
                     </tbody>
                   </table>
                 </div>
+              ) : fileFormatted ? (
+                <div
+                  ref={contentScrollRef}
+                  className="email-formatted"
+                  style={{ fontSize: `${fileFontSize}px` }}
+                  dangerouslySetInnerHTML={{ __html: formatEmailBody(fileContent) }}
+                />
               ) : (
-                <pre>{fileContent}</pre>
+                <pre ref={contentScrollRef} style={{ fontSize: `${fileFontSize}px` }}>{fileContent}</pre>
+              )}
+              {currentFileMimeType !== 'application/vnd.google-apps.spreadsheet' && (
+                <button
+                  className="page-down-btn"
+                  onClick={() => {
+                    const pane = contentScrollRef.current;
+                    if (pane) {
+                      const maxScroll = pane.scrollHeight - pane.clientHeight;
+                      pane.scrollTop = Math.min(maxScroll, pane.scrollTop + pane.clientHeight * 0.9);
+                    }
+                  }}
+                  title="Page down"
+                >
+                  <svg width="28" height="28" viewBox="0 0 64 64"><path d="M8 20 L32 44 L56 20" stroke="rgba(255,255,255,0.85)" strokeWidth="8" fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
               )}
             </div>
             </div>
@@ -1988,6 +2039,13 @@ function DriveSearch() {
                   title="Bash-style shell for Drive (cd, ls, mv, rm, open...)"
                 >
                   &gt;_ Terminal
+                </button>
+                <button
+                  className="tree-load-btn tree-theme-btn"
+                  onClick={() => setUiTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+                  title="Toggle light/dark mode (file viewer + terminal)"
+                >
+                  {uiTheme === 'dark' ? '☀️ Light' : '🌙 Dark'}
                 </button>
                 <input
                   type="text"

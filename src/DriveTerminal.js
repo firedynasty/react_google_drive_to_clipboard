@@ -764,7 +764,26 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     <div className="term" onClick={(e) => { if (!window.getSelection()?.toString() && e.target === e.currentTarget) inputRef.current?.focus(); }}>
       <div className="term-header">
         <span>drive shell — {pathString(cwd)}</span>
-        {onClose && <button className="term-close" onClick={onClose} title="Close">×</button>}
+        <div className="term-header-actions">
+          <button
+            className="copy-btn"
+            onClick={async () => {
+              const text = lines.map((l) => {
+                if (l.type === 'cmd') return `${l.prompt} $ ${l.text}`;
+                if (l.type === 'grid') return l.files.map((f) => f.name + (f.mimeType === FOLDER_MIME ? '/' : '')).join('  ');
+                if (l.type === 'entry') return l.text + l.file.name + (l.file.mimeType === FOLDER_MIME ? '/' : '');
+                if (l.type === 'link') return l.text + l.url;
+                return l.text;
+              }).join('\n');
+              await navigator.clipboard.writeText(text);
+              print('out', '(copied terminal output to clipboard)', { dim: true });
+            }}
+            title="Copy terminal output to clipboard"
+          >
+            Copy
+          </button>
+          {onClose && <button className="term-close" onClick={onClose} title="Close">×</button>}
+        </div>
       </div>
       <div className="term-body" ref={scrollRef} onClick={() => { if (!window.getSelection()?.toString()) inputRef.current?.focus(); }}>
         {lines.map((l, i) => {

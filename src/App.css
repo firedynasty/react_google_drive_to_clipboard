@@ -1015,21 +1015,49 @@ input:checked + .slider:before {
   align-items: center;
   justify-content: center;
   z-index: 500;
-  padding: 20px;
+  padding: 0;
   box-sizing: border-box;
 }
 
 /* File content display */
 .file-content-display {
-  background: #0f0f23;
-  border-radius: 8px;
-  border: 1px solid #333;
-  width: 90vw;
-  max-width: 900px;
-  max-height: 85vh;
+  position: relative;
+  background: var(--dt-modal-bg, #0f0f23);
+  border-radius: 0;
+  border: none;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* Floating page-down button, overlaid on the file modal's scrollable content */
+.page-down-btn {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #4285f4;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.page-down-btn:hover {
+  opacity: 1;
+  transform: scale(1.08);
 }
 
 .file-content-display .content-header {
@@ -1037,16 +1065,16 @@ input:checked + .slider:before {
   justify-content: space-between;
   align-items: center;
   padding: 10px 15px;
-  border-bottom: 1px solid #333;
-  background: #16213e;
+  border-bottom: 1px solid var(--dt-modal-border, #333);
+  background: var(--dt-header-bg, #16213e);
 }
 
 .append-note-bar {
   display: flex;
   gap: 8px;
   padding: 10px 15px;
-  border-bottom: 1px solid #333;
-  background: #101730;
+  border-bottom: 1px solid var(--dt-modal-border, #333);
+  background: var(--dt-notebar-bg, #101730);
   border-radius: 4px 4px 0 0;
 }
 
@@ -1054,10 +1082,10 @@ input:checked + .slider:before {
   flex: 1;
   padding: 10px;
   font-size: 16px;
-  border: 1px solid #333;
+  border: 1px solid var(--dt-input-border, #333);
   border-radius: 4px;
-  background: #0f0f23;
-  color: #fff;
+  background: var(--dt-input-bg, #0f0f23);
+  color: var(--dt-input-text, #fff);
 }
 
 .append-note-bar input:focus {
@@ -1098,14 +1126,14 @@ input:checked + .slider:before {
 }
 
 .file-content-display .content-header span {
-  color: #61dafb;
+  color: var(--dt-title-color, #61dafb);
   font-size: 14px;
 }
 
 .copy-cell-toggle {
   display: flex;
   gap: 10px;
-  color: #ccc;
+  color: var(--dt-muted, #ccc);
   font-size: 12px;
 }
 
@@ -1142,8 +1170,8 @@ input:checked + .slider:before {
   font-size: 20px;
   line-height: 1;
   background: none;
-  color: #888;
-  border: 1px solid #444;
+  color: var(--dt-close-color, #888);
+  border: 1px solid var(--dt-close-border, #444);
   border-radius: 4px;
   cursor: pointer;
   display: flex;
@@ -1152,8 +1180,8 @@ input:checked + .slider:before {
 }
 
 .file-close-btn:hover {
-  color: #fff;
-  border-color: #888;
+  color: var(--dt-close-hover-color, #fff);
+  border-color: var(--dt-close-hover-border, #888);
 }
 
 .file-content-display .edit-btn {
@@ -1355,8 +1383,8 @@ input:checked + .slider:before {
   font-family: monospace;
   font-size: 13px;
   line-height: 1.5;
-  color: #eee;
-  background: #0f0f23;
+  color: var(--dt-text, #eee);
+  background: var(--dt-modal-bg, #0f0f23);
   border: 2px solid #9c27b0;
   border-radius: 0 0 4px 4px;
   resize: none;
@@ -1376,9 +1404,32 @@ input:checked + .slider:before {
   font-family: monospace;
   font-size: 13px;
   line-height: 1.5;
-  color: #eee;
+  color: var(--dt-text, #eee);
+  /* Overrides .drive-search pre's hardcoded dark background (meant for the
+     small "Setup Required" snippet), which otherwise leaks in here too. */
+  background: var(--dt-modal-bg, #0f0f23);
   flex: 1;
   overflow-y: auto;
+}
+
+.file-content-display .email-formatted {
+  margin: 0;
+  padding: 15px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--dt-text, #ddd);
+  background: var(--dt-modal-bg, #0f0f23);
+  flex: 1;
+  overflow-y: auto;
+}
+
+.file-content-display .email-formatted a {
+  color: #60a5fa;
+  word-break: break-all;
+}
+
+.file-content-display .email-formatted h4 {
+  color: #00d4ff;
 }
 
 /* CSV Table */
@@ -1396,17 +1447,17 @@ input:checked + .slider:before {
 }
 
 .csv-table th {
-  background: #1a1a3e;
-  color: #61dafb;
+  background: var(--dt-csv-th-bg, #1a1a3e);
+  color: var(--dt-title-color, #61dafb);
   padding: 8px 12px;
   text-align: left;
-  border: 1px solid #333;
+  border: 1px solid var(--dt-modal-border, #333);
 }
 
 .csv-table td {
   padding: 6px 12px;
-  border: 1px solid #333;
-  color: #eee;
+  border: 1px solid var(--dt-modal-border, #333);
+  color: var(--dt-text, #eee);
 }
 
 .csv-table tbody tr {
@@ -1414,12 +1465,12 @@ input:checked + .slider:before {
 }
 
 .csv-table tbody tr:hover {
-  background: #1a1a2e;
+  background: var(--dt-csv-hover-bg, #1a1a2e);
 }
 
 .csv-table tbody tr.selected-row {
-  background: #2a2a5e;
-  outline: 1px solid #61dafb;
+  background: var(--dt-csv-selected-bg, #2a2a5e);
+  outline: 1px solid var(--dt-title-color, #61dafb);
 }
 
 /* Email Modal */
@@ -1803,15 +1854,18 @@ input:checked + .slider:before {
 .tree-terminal-btn:hover { background: #444; }
 .tree-terminal-btn.active { background: #111; box-shadow: inset 0 0 0 1px #39d353; color: #39d353; }
 
+.tree-theme-btn { background: #333; }
+.tree-theme-btn:hover { background: #444; }
+
 /* ── Drive Terminal ── */
 .term {
   margin: 0;
-  border: 1px solid #2d2d2d;
+  border: 1px solid var(--dt-term-border, #2d2d2d);
   border-radius: 0;
-  background: #0b0b14;
+  background: var(--dt-term-bg, #0b0b14);
   font-family: Menlo, Monaco, Consolas, monospace;
   font-size: 13px;
-  color: #d4d4d4;
+  color: var(--dt-term-text, #d4d4d4);
   overflow: hidden;
 }
 .term-header {
@@ -1819,19 +1873,35 @@ input:checked + .slider:before {
   justify-content: space-between;
   align-items: center;
   padding: 1px 4px;
-  background: #1a1a26;
-  color: #888;
+  background: var(--dt-term-header-bg, #1a1a26);
+  color: var(--dt-term-header-color, #888);
   font-size: 12px;
 }
+.term-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.term-header .copy-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: #4285f4;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.term-header .copy-btn:hover { background: #357abd; }
 .term-close {
   background: none;
   border: none;
-  color: #888;
+  color: var(--dt-term-close-color, #888);
   font-size: 16px;
   cursor: pointer;
   line-height: 1;
 }
-.term-close:hover { color: #fff; }
+.term-close:hover { color: var(--dt-term-close-hover, #fff); }
 .term-body {
   height: 340px;
   overflow-y: auto;
@@ -1857,7 +1927,7 @@ input:checked + .slider:before {
 .term-entry { cursor: pointer; }
 .term-entry:hover { text-decoration: underline; }
 .term-folder { color: #58a6ff; }
-.term-file { color: #d4d4d4; }
+.term-file { color: var(--dt-term-text, #d4d4d4); }
 .term-input-row {
   display: flex;
   align-items: center;
@@ -1870,9 +1940,38 @@ input:checked + .slider:before {
   background: transparent;
   border: none;
   outline: none;
-  color: #fff;
+  color: var(--dt-term-text, #fff);
   font: inherit;
   padding: 0;
+}
+
+/* ── Light theme — file modal + terminal only ── */
+.drive-search[data-theme="light"] {
+  --dt-modal-bg: #ffffff;
+  --dt-modal-border: #d6d8e0;
+  --dt-header-bg: #eef1f8;
+  --dt-title-color: #1a73e8;
+  --dt-muted: #555;
+  --dt-notebar-bg: #f5f6fa;
+  --dt-input-bg: #ffffff;
+  --dt-input-border: #ccc;
+  --dt-input-text: #1a1a1a;
+  --dt-close-color: #666;
+  --dt-close-border: #ccc;
+  --dt-close-hover-color: #000;
+  --dt-close-hover-border: #999;
+  --dt-text: #1a1a1a;
+  --dt-csv-th-bg: #eef1f8;
+  --dt-csv-hover-bg: #f2f4fb;
+  --dt-csv-selected-bg: #dbe4ff;
+
+  --dt-term-bg: #ffffff;
+  --dt-term-border: #d6d8e0;
+  --dt-term-header-bg: #eef1f4;
+  --dt-term-header-color: #555;
+  --dt-term-text: #1a1a1a;
+  --dt-term-close-color: #666;
+  --dt-term-close-hover: #000;
 }
 
 .tree-breadcrumb {
