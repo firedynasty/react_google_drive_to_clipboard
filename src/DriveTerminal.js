@@ -18,6 +18,7 @@ const DEFAULT_ALIASES = {
   l: 'ls',
   cat: 'open',
   opens: "open -a 'google chrome'",
+  c: 'cd',
   '..': 'cd ..',
   trees: `echo 'tree -d -L 2 -I "node_modules"'`,
 };
@@ -508,9 +509,14 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
         : null;
 
       let root = { ...cwd[cwd.length - 1], mimeType: FOLDER_MIME };
+      let rootPath = '/' + cwd.slice(1).map((c) => c.name).join('/');
       if (target) {
-        root = (await resolveTarget(target, 'folder')).entry;
+        const res = await resolveTarget(target, 'folder');
+        root = res.entry;
         if (root.mimeType !== FOLDER_MIME) throw new Error(`tree: ${target}: Not a folder`);
+        // Full path from My Drive, so clicking nested entries works from any folder.
+        const above = res.stack || (await ancestorsOf(root));
+        rootPath = '/' + [...above.slice(1), root].map((c) => c.name).join('/');
       }
 
       // Fetch level by level, listing sibling folders in parallel.
@@ -530,17 +536,18 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
 
       let dirs = 0;
       let files = 0;
-      print('entry', '', { file: root });
-      const walk = (id, prefix) => {
+      print('entry', '', { file: { ...root, fullPath: rootPath } });
+      const walk = (id, prefix, path) => {
         const kids = children.get(id) || [];
         kids.forEach((e, i) => {
           const last = i === kids.length - 1;
           if (e.mimeType === FOLDER_MIME) dirs++; else files++;
-          print('entry', prefix + (last ? '└── ' : '├── '), { file: e });
-          walk(e.id, prefix + (last ? '    ' : '│   '));
+          const fullPath = (path === '/' ? '' : path) + '/' + e.name;
+          print('entry', prefix + (last ? '└── ' : '├── '), { file: { ...e, fullPath } });
+          walk(e.id, prefix + (last ? '    ' : '│   '), fullPath);
         });
       };
-      walk(root.id, '');
+      walk(root.id, '', rootPath);
       print('out', '');
       print('out', `${dirs} director${dirs === 1 ? 'y' : 'ies'}${dirsOnly ? '' : `, ${files} file${files === 1 ? '' : 's'}`}`);
     },
@@ -744,10 +751,11 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     }
   };
 
-  // Clicking an entry: folders cd into it, files open in the viewer.
+  // Clicking an entry: folders cd into it, files open in the viewer. Tree entries carry a full
+  // path because nested ones aren't in the current folder.
   const clickEntry = (f) => {
     if (busy) return;
-    run(`${f.mimeType === FOLDER_MIME ? 'cd' : 'open'} ${quoteArg(f.name)}`);
+    run(`${f.mimeType === FOLDER_MIME ? 'cd' : 'open'} ${quoteArg(f.fullPath || f.name)}`);
   };
 
   const renderName = (f) => (
