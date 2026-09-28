@@ -35,6 +35,7 @@ const HELP = [
   'cp <src> [dest]       copy a file (Drive copy) into a folder or as a new name',
   'rm <name...>          move to Drive trash (recoverable)',
   'mkdir <name>          create a folder',
+  'vim <name>            open a file, creating it if new (name.txt = text file, no extension = Google Doc)',
   'recent                10 most recently viewed Docs/Sheets (numbered)',
   'find <text>           search all of Drive by name (numbered)',
   'tree [-d] [-L N] [-I "a|b*"] [path]   folder tree (default depth 2, max 6)',
@@ -359,6 +360,41 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       if (entry.mimeType === FOLDER_MIME) return commands.cd([args[0]]);
       print('out', `Opening ${entry.name}...`);
       openFile(entry.id, entry.name, entry.mimeType);
+    },
+
+    // vim <name>: open the file, creating it first if it doesn't exist. No copying a blank template needed.
+    // A name with an extension (notes.txt) makes a plain text file; no extension makes a Google Doc.
+    vim: async (args) => {
+      if (!args[0]) throw new Error('usage: vim <name>');
+      const target = args[0];
+      let found = null;
+      try {
+        found = (await resolve(target, 'file')).entry;
+      } catch (e) {
+        if (!/No such file/.test(e.message)) throw e;
+      }
+      if (found) {
+        if (found.mimeType === FOLDER_MIME) throw new Error(`vim: ${target}: Is a folder`);
+        print('out', `Opening ${found.name}...`);
+        return openFile(found.id, found.name, found.mimeType, { edit: true });
+      }
+      const slash = target.lastIndexOf('/');
+      const name = target.slice(slash + 1);
+      if (!name) throw new Error(`vim: ${target}: Is a folder`);
+      let parent = cwd[cwd.length - 1];
+      if (slash >= 0) {
+        const { entry } = await resolve(target.slice(0, slash) || '/', 'folder');
+        if (entry.mimeType !== FOLDER_MIME) throw new Error(`vim: ${target}: Not a folder`);
+        parent = entry;
+      }
+      const mimeType = /\.[A-Za-z0-9]+$/.test(name) ? 'text/plain' : DOC_MIME;
+      const created = await api('https://www.googleapis.com/drive/v3/files?fields=id,name,mimeType', {
+        method: 'POST',
+        body: JSON.stringify({ name, mimeType, parents: [parent.id] }),
+      });
+      invalidate(parent.id);
+      print('out', `created ${created.name}`);
+      openFile(created.id, created.name, created.mimeType, { edit: true });
     },
 
     web: async (args) => {

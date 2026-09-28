@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 import DriveTerminal from './DriveTerminal';
+import VimEditor from './VimEditor';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
@@ -444,7 +445,7 @@ function DriveSearch() {
     }
   }, [accessToken]);
 
-  const handleFileClick = async (fileId, fileName, mimeType) => {
+  const handleFileClick = async (fileId, fileName, mimeType, { edit = false } = {}) => {
     if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s) for "${currentFileName}"?`)) return;
     setStatus(`Fetching ${fileName}...`);
 
@@ -543,9 +544,10 @@ function DriveSearch() {
       setCurrentFileName(fileName);
       setCurrentFileId(fileId);
       setCurrentFileMimeType(mimeType);
-      setIsEditMode(false);
+      // The terminal's vim command opens straight into the vim editor
+      setIsEditMode(edit);
       setFileFormatted(false);
-      setEditContent('');
+      setEditContent(edit ? content : '');
       setAppendNote('');
       setPendingNotes([]);
       setStatus(`Loaded "${fileName}"`);
@@ -808,7 +810,7 @@ function DriveSearch() {
 
   const saveFileToGoogleDrive = async () => {
     console.log('[Save] currentFileId:', currentFileId, 'accessToken:', !!accessToken);
-    if (!currentFileId) { setStatus('Error: no file ID — re-open the file and try again'); return; }
+    if (!currentFileId) { setStatus('Error: no file ID — re-open the file and try again'); return false; }
 
     setSaving(true);
     setStatus(`Saving "${currentFileName}"...`);
@@ -819,7 +821,7 @@ function DriveSearch() {
     } catch (e) {
       setSaving(false);
       setStatus('Session expired — please sign in again');
-      return;
+      return false;
     }
 
     // Log token info (first 20 chars only for safety)
@@ -835,15 +837,36 @@ function DriveSearch() {
       await writeContentToGoogleDrive(contentToSave, token);
 
       // Update local state (a full save includes any queued notes)
-      setFileContent(contentToSave);
-      setIsEditMode(false);
+      setFileContent(contentToSave); // stays in the editor, like :w
       setPendingNotes([]);
       setStatus(`Saved "${currentFileName}" successfully!`);
+      return true;
     } catch (error) {
       setStatus('Error saving: ' + error.message);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  // Close the file window. A file being edited with unsaved changes is saved first (and stays open if that fails);
+  // a file opened just to read is never written.
+  const closeFileModal = async () => {
+    if (isEditMode && editContent !== fileContent) {
+      if (!(await saveFileToGoogleDrive())) return;
+    } else if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s) for "${currentFileName}"?`)) {
+      return;
+    }
+    setFileContent('');
+    setCurrentFileName('');
+    setCurrentFileId('');
+    setCurrentFileMimeType('');
+    setIsEditMode(false);
+    setEditContent('');
+    setAppendNote('');
+    setPendingNotes([]);
+    setShowRowInput(false);
+    setFileFormatted(false);
   };
 
   // Queue a note locally (updates the view immediately) — no API call until Save.
@@ -1068,7 +1091,9 @@ function DriveSearch() {
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.key === 'Escape') {
-        if (fileContent) {
+        if (isEditMode) {
+          // Esc belongs to the vim editor; leave with :q
+        } else if (fileContent || currentFileId) {
           if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return;
           setFileContent(''); setCurrentFileName(''); setCurrentFileId(''); setCurrentFileMimeType('');
           setIsEditMode(false); setEditContent(''); setAppendNote(''); setPendingNotes([]); setShowRowInput(false);
@@ -1085,7 +1110,7 @@ function DriveSearch() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [emailModal.open, emailModal.email, keepPillModal.open, trashSingleEmail, fileContent, pendingNotes.length]);
+  }, [emailModal.open, emailModal.email, keepPillModal.open, trashSingleEmail, fileContent, currentFileId, isEditMode, pendingNotes.length]);
 
   // Open email modal and fetch body
   const openEmailModal = async (email, fromPillLabel = null) => {
@@ -1769,8 +1794,8 @@ function DriveSearch() {
 
           {status && <div className="status">{status}</div>}
 
-          {fileContent && (
-            <div className="file-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return; setFileContent(''); setCurrentFileName(''); setCurrentFileId(''); setCurrentFileMimeType(''); setIsEditMode(false); setEditContent(''); setAppendNote(''); setPendingNotes([]); setShowRowInput(false); setFileFormatted(false); } }}>
+          {(fileContent || currentFileId) && (
+            <div className="file-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeFileModal(); }}>
             <div className="file-content-display">
               <div className="append-note-bar">
                 <input
@@ -1911,19 +1936,7 @@ function DriveSearch() {
                   </button>
                   <button
                     className="file-close-btn"
-                    onClick={() => {
-                      if (pendingNotes.length > 0 && !window.confirm(`Discard ${pendingNotes.length} unsaved note(s)?`)) return;
-                      setFileContent('');
-                      setCurrentFileName('');
-                      setCurrentFileId('');
-                      setCurrentFileMimeType('');
-                      setIsEditMode(false);
-                      setEditContent('');
-                      setAppendNote('');
-                      setPendingNotes([]);
-                      setShowRowInput(false);
-                      setFileFormatted(false);
-                    }}
+                    onClick={closeFileModal}
                     title="Close"
                   >
                     &times;
@@ -1931,12 +1944,14 @@ function DriveSearch() {
                 </div>
               </div>
               {isEditMode ? (
-                <textarea
-                  ref={contentScrollRef}
-                  className="edit-textarea"
-                  style={{ fontSize: `${fileFontSize}px` }}
+                <VimEditor
                   value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
+                  onChange={setEditContent}
+                  fontSize={fileFontSize}
+                  onSave={saveFileToGoogleDrive}
+                  onQuit={() => setIsEditMode(false)}
+                  isDirty={() => editContent !== fileContent}
+                  onError={setStatus}
                 />
               ) : currentFileMimeType === 'application/vnd.google-apps.spreadsheet' ? (
                 <div className="csv-table-wrapper">
@@ -2088,7 +2103,7 @@ function DriveSearch() {
                   openFile={handleFileClick}
                   onClose={() => setTerminalOpen(false)}
                   visible={terminalOpen}
-                  modalOpen={!!fileContent}
+                  modalOpen={!!(fileContent || currentFileId)}
                 />
               </div>
 

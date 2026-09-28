@@ -2116,3 +2116,13 @@ input:checked + .slider:before {
   outline: none;
   border-color: #4285f4;
 }
+
+.file-content-display .vim-editor {
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.file-content-display .vim-editor .cm-editor.cm-focused {
+  outline: none;
+}
