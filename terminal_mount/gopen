@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# gopen [-n] [path]  — open a Drive for Desktop file or folder at its google.com address in Chrome.
+# Same idea as `web` / `open -a chrome .` in the web terminal. -n only prints the URL.
+# Reads the item id Drive for Desktop stores on every item, so there is no network or login involved.
+set -euo pipefail
+
+print_only=0
+[ "${1:-}" = "-n" ] && { print_only=1; shift; }
+target="${1:-.}"
+[ -e "$target" ] || { echo "gopen: $target: no such file or folder" >&2; exit 1; }
+
+id=$(xattr -p 'com.google.drivefs.item-id#S' "$target" 2>/dev/null || true)
+# .gdoc/.gsheet/.gslides pointers also carry the id inside
+if [ -z "$id" ] && [ -f "$target" ]; then
+  id=$(jq -r '.doc_id // empty' "$target" 2>/dev/null || true)
+fi
+
+if [ -z "$id" ]; then
+  # The top of My Drive has no item id
+  case "$(cd "$target" 2>/dev/null && pwd -P)" in
+    */GoogleDrive-*/My\ Drive) url=https://drive.google.com/drive/my-drive ;;
+    *) echo "gopen: $target: not inside Google Drive (no Drive item id)" >&2; exit 1 ;;
+  esac
+elif [ -d "$target" ]; then
+  url="https://drive.google.com/drive/folders/$id"
+else
+  case "$target" in
+    *.gdoc)    url="https://docs.google.com/document/d/$id/edit" ;;
+    *.gsheet)  url="https://docs.google.com/spreadsheets/d/$id/edit" ;;
+    *.gslides) url="https://docs.google.com/presentation/d/$id/edit" ;;
+    *)         url="https://drive.google.com/file/d/$id/view" ;;
+  esac
+fi
+
+echo "$url"
+[ "$print_only" = 1 ] || open -a "Google Chrome" "$url"
