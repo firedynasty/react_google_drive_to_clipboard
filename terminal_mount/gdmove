@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# gmove <file>... <folder-url|folder-id>  — move Drive for Desktop files into a Drive folder given by its web address.
+# gdmove <file>... <folder-url|folder-id>  — move Drive for Desktop files into a Drive folder given by its web address.
 # Like `mv`, but the destination is a https://drive.google.com/drive/folders/… link, so you don't need the folder
 # on your disk. Works on folders too. The local copy disappears once Drive syncs.
-# Auth borrows the rclone remote below (needs full "drive" scope), same as gvim.
+# Auth borrows the rclone remote below (needs full "drive" scope), same as gdvim.
 set -euo pipefail
 
 REMOTE="${GVIM_REMOTE:-gdrive}"
 API=https://www.googleapis.com
 
-[ $# -ge 2 ] || { echo "usage: gmove <file>... <folder-url|folder-id>" >&2; exit 2; }
+[ $# -ge 2 ] || { echo "usage: gdmove <file>... <folder-url|folder-id>" >&2; exit 2; }
 dest_arg="${!#}"
 files=("${@:1:$#-1}")
 
@@ -16,15 +16,15 @@ files=("${@:1:$#-1}")
 if [[ "$dest_arg" =~ /folders/([A-Za-z0-9_-]{10,}) ]]; then dest="${BASH_REMATCH[1]}"
 elif [[ "$dest_arg" =~ [?\&]id=([A-Za-z0-9_-]{10,}) ]]; then dest="${BASH_REMATCH[1]}"
 elif [[ "$dest_arg" =~ ^[A-Za-z0-9_-]{10,}$ ]]; then dest="$dest_arg"
-else echo "gmove: '$dest_arg' isn't a Drive folder link or id" >&2; exit 2; fi
+else echo "gdmove: '$dest_arg' isn't a Drive folder link or id" >&2; exit 2; fi
 
 # Collect the Drive id of each local item before touching the network.
 ids=()
 for f in "${files[@]}"; do
-  [ -e "$f" ] || { echo "gmove: $f: no such file or folder" >&2; exit 1; }
+  [ -e "$f" ] || { echo "gdmove: $f: no such file or folder" >&2; exit 1; }
   id=$(xattr -p 'com.google.drivefs.item-id#S' "$f" 2>/dev/null || true)
   if [ -z "$id" ] && [ -f "$f" ]; then id=$(jq -r '.doc_id // empty' "$f" 2>/dev/null || true); fi
-  [ -n "$id" ] || { echo "gmove: $f: not inside Google Drive (no Drive item id)" >&2; exit 1; }
+  [ -n "$id" ] || { echo "gdmove: $f: not inside Google Drive (no Drive item id)" >&2; exit 1; }
   ids+=("$id")
 done
 
@@ -37,30 +37,30 @@ e = d.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', sys.argv[1]).replace
 sys.exit(0 if e.timestamp() > d.datetime.now(e.tzinfo).timestamp() + 60 else 1)
 PY
 }
-if ! fresh; then rclone about "$REMOTE:" >/dev/null; cfg=$(rclone config dump); fi
+if ! fresh; then echo "gdmove: refreshing your Google login (can take up to a minute)..." >&2; rclone about "$REMOTE:" >/dev/null; cfg=$(rclone config dump); fi
 auth="Authorization: Bearer $(jq -r --arg r "$REMOTE" '.[$r].token | fromjson | .access_token' <<<"$cfg")"
 
 get() { curl -sf -H "$auth" "$API/drive/v3/files/$1?fields=id,name,mimeType,parents&supportsAllDrives=true"; }
 
-destmeta=$(get "$dest") || { echo "gmove: can't read that folder (wrong link, or no access?)" >&2; exit 1; }
+destmeta=$(get "$dest") || { echo "gdmove: can't read that folder (wrong link, or no access?)" >&2; exit 1; }
 [ "$(jq -r .mimeType <<<"$destmeta")" = application/vnd.google-apps.folder ] \
-  || { echo "gmove: that link is not a folder" >&2; exit 1; }
+  || { echo "gdmove: that link is not a folder" >&2; exit 1; }
 destname=$(jq -r .name <<<"$destmeta")
 
 status=0
 for i in "${!ids[@]}"; do
   id="${ids[$i]}"
-  meta=$(get "$id") || { echo "gmove: ${files[$i]}: can't read it in Drive" >&2; status=1; continue; }
+  meta=$(get "$id") || { echo "gdmove: ${files[$i]}: can't read it in Drive" >&2; status=1; continue; }
   name=$(jq -r .name <<<"$meta")
-  if [ "$id" = "$dest" ]; then echo "gmove: $name: can't move a folder into itself" >&2; status=1; continue; fi
+  if [ "$id" = "$dest" ]; then echo "gdmove: $name: can't move a folder into itself" >&2; status=1; continue; fi
   old=$(jq -r '(.parents // []) | join(",")' <<<"$meta")
-  if [ "$old" = "$dest" ]; then echo "gmove: $name: already in $destname"; continue; fi
+  if [ "$old" = "$dest" ]; then echo "gdmove: $name: already in $destname"; continue; fi
   url="$API/drive/v3/files/$id?addParents=$dest&supportsAllDrives=true&fields=id"
   [ -z "$old" ] || url="$url&removeParents=$old"
   if curl -sf -X PATCH -H "$auth" -H "Content-Type: application/json" -d '{}' "$url" >/dev/null; then
-    echo "gmove: $name → $destname"
+    echo "gdmove: $name → $destname"
   else
-    echo "gmove: $name: move failed" >&2; status=1
+    echo "gdmove: $name: move failed" >&2; status=1
   fi
 done
 exit $status

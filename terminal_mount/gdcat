@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# gdcat <name>...  — print Google Docs (and Sheets as CSV) from Drive for Desktop to the terminal, like cat.
+# Read-only and pipe-friendly:  gdcat notes | pbcopy    gdcat notes | grep -i goal    gdcat a b > both.txt
+# Docs come out as plain text; a Sheet prints its first tab as CSV. Anything else is passed to plain cat.
+# Auth borrows the rclone remote below (needs full "drive" scope), same as gdvim.
+set -euo pipefail
+
+REMOTE="${GVIM_REMOTE:-gdrive}"
+API=https://www.googleapis.com
+
+[ $# -ge 1 ] || { echo "usage: gdcat <name>[.gdoc|.gdsheet]..." >&2; exit 2; }
+
+drive=$(ls -d "$HOME"/Library/CloudStorage/GoogleDrive-*/"My Drive" 2>/dev/null | head -1 || true)
+
+# Find each argument: current folder first, then My Drive; accept name, name.gdoc, name.gdsheet.
+paths=()
+for name in "$@"; do
+  found=""
+  for dir in . "$drive"; do
+    [ -n "$dir" ] || continue
+    for cand in "$name" "$name.gdoc" "$name.gdsheet" "${name%.doc}.gdoc"; do
+      if [ -f "$dir/$cand" ]; then found="$dir/$cand"; break 2; fi
+    done
+  done
+  [ -n "$found" ] || { echo "gdcat: $name: no such file in $(pwd) or My Drive" >&2; exit 1; }
+  paths+=("$found")
+done
+
+# Only refresh the token through rclone (slow) when the saved one has expired, and only if a pointer needs it.
+auth=""
+get_auth() {
+  [ -z "$auth" ] || return 0
+  local cfg; cfg=$(rclone config dump)
+  if ! python3 - "$(jq -r --arg r "$REMOTE" '.[$r].token | fromjson | .expiry' <<<"$cfg")" <<'PY'
+import sys, re, datetime as d
+e = d.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', sys.argv[1]).replace('Z', '+00:00'))
+sys.exit(0 if e.timestamp() > d.datetime.now(e.tzinfo).timestamp() + 60 else 1)
+PY
+  then echo "gdcat: refreshing your Google login (can take up to a minute)..." >&2; rclone about "$REMOTE:" >/dev/null; cfg=$(rclone config dump); fi
+  auth="Authorization: Bearer $(jq -r --arg r "$REMOTE" '.[$r].token | fromjson | .access_token' <<<"$cfg")"
+}
+
+# Export with retries for rate limits (429, or 403 "quota") like gdvim.
+export_to_stdout() {  # <id> <mime>
+  local out code i tmp; tmp=$(mktemp)
+  for i in 1 2 3 4 5; do
+    code=$(curl -s -o "$tmp" -w '%{http_code}' -H "$auth" "$API/drive/v3/files/$1/export?mimeType=$2") || true
+    if [ "$code" = 200 ]; then cat "$tmp"; rm -f "$tmp"; return 0; fi
+    if [ "$code" = 429 ] || { [ "$code" = 403 ] && grep -qi 'quota\|rate' "$tmp"; }; then
+      echo "gdcat: Google is rate-limiting this login; waiting 20s ($i/5)..." >&2; sleep 20; continue
+    fi
+    break
+  done
+  echo "gdcat: Drive returned HTTP $code: $(jq -r '.error.message // empty' "$tmp" 2>/dev/null)" >&2
+  rm -f "$tmp"; return 1
+}
+
+status=0
+for f in "${paths[@]}"; do
+  case "$f" in
+    *.gdoc|*.gdsheet)
+      id=$(jq -r '.doc_id // empty' "$f" 2>/dev/null || true)
+      [ -n "$id" ] || { echo "gdcat: $f: not a Drive pointer file" >&2; status=1; continue; }
+      get_auth
+      if [[ "$f" == *.gdsheet ]]; then mime="text/csv"; else mime="text/plain"; fi
+      # Docs export CRLF line endings and a BOM; clean both so the output is normal text.
+      if ! export_to_stdout "$id" "$mime" | sed $'1s/^\xef\xbb\xbf//' | tr -d '\r'; then status=1; fi
+      ;;
+    *) cat "$f" ;;
+  esac
+done
+exit $status

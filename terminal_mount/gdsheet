@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# gdsheet <file.csv> [name]  — turn a CSV into a native Google Sheet in the Drive folder you're standing in.
+# Uploads the CSV through the Drive API with conversion to a Google Sheet (the .gdsheet pointer then appears in
+# the Drive for Desktop mount after it syncs). Asks before creating. Prints the Sheet's link.
+# Auth borrows the rclone remote below (needs full "drive" scope), same as gdvim.
+set -euo pipefail
+
+REMOTE="${GVIM_REMOTE:-gdrive}"
+API=https://www.googleapis.com
+
+[ $# -ge 1 ] && [ $# -le 2 ] || { echo "usage: gdsheet <file.csv> [sheet name]" >&2; exit 2; }
+csv="$1"
+[ -f "$csv" ] || { echo "gdsheet: $csv: no such file" >&2; exit 1; }
+title="${2:-$(basename "${csv%.*}")}"
+
+drive=$(ls -d "$HOME"/Library/CloudStorage/GoogleDrive-*/"My Drive" 2>/dev/null | head -1 || true)
+rel=""; inside=0
+if [ -n "$drive" ]; then
+  case "$PWD/" in "$drive"/*) inside=1; rel="${PWD#"$drive"}"; rel="${rel#/}" ;; esac
+fi
+if [ "$inside" = 1 ]; then
+  printf 'gdsheet: create Sheet "%s" from %s in My Drive/%s? [y/N] ' "$title" "$csv" "$rel"
+else
+  printf 'gdsheet: you are outside Drive; create Sheet "%s" from %s at the top of My Drive? [y/N] ' "$title" "$csv"
+fi
+read -r reply
+case "$reply" in y|Y|yes) ;; *) echo "gdsheet: not created"; exit 1;; esac
+
+# Only refresh the token through rclone (slow) when the saved one has expired.
+cfg=$(rclone config dump)
+fresh() {
+  python3 - "$(jq -r --arg r "$REMOTE" '.[$r].token | fromjson | .expiry' <<<"$cfg")" <<'PY'
+import sys, re, datetime as d
+e = d.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', sys.argv[1]).replace('Z', '+00:00'))
+sys.exit(0 if e.timestamp() > d.datetime.now(e.tzinfo).timestamp() + 60 else 1)
+PY
+}
+if ! fresh; then echo "gdsheet: refreshing your Google login (can take up to a minute)..." >&2; rclone about "$REMOTE:" >/dev/null; cfg=$(rclone config dump); fi
+auth="Authorization: Bearer $(jq -r --arg r "$REMOTE" '.[$r].token | fromjson | .access_token' <<<"$cfg")"
+
+# Walk the folder path from the root to find the destination folder id.
+parent=root
+if [ -n "$rel" ]; then
+  IFS='/' read -r -a parts <<<"$rel"
+  for part in "${parts[@]}"; do
+    q="name = '${part//\'/\\\'}' and '$parent' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    parent=$(curl -sf -G -H "$auth" --data-urlencode "q=$q" --data-urlencode "fields=files(id)" \
+      --data-urlencode "supportsAllDrives=true" --data-urlencode "includeItemsFromAllDrives=true" \
+      "$API/drive/v3/files" | jq -r '.files[0].id // empty') \
+      || { echo "gdsheet: couldn't look up folder '$part'" >&2; exit 1; }
+    [ -n "$parent" ] || { echo "gdsheet: couldn't find folder '$part' in Drive" >&2; exit 1; }
+  done
+fi
+
+# Multipart upload: metadata says "make a Google Sheet", the CSV is the content Google converts.
+meta=$(jq -n --arg n "$title" --arg p "$parent" '{name:$n, mimeType:"application/vnd.google-apps.spreadsheet", parents:[$p]}')
+id=$(curl -sf -X POST -H "$auth" \
+  -F "metadata=$meta;type=application/json" -F "file=@$csv;type=text/csv" \
+  "$API/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id" | jq -r '.id // empty') \
+  || { echo "gdsheet: upload failed" >&2; exit 1; }
+[ -n "$id" ] || { echo "gdsheet: upload failed" >&2; exit 1; }
+
+echo "gdsheet: created \"$title\" (the .gdsheet file shows up in Finder after Drive syncs)"
+echo "https://docs.google.com/spreadsheets/d/$id/edit"

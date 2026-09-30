@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gvim <name>[.gdoc]  — edit a Google Doc as plain text in vim (Drive for Desktop only mounts a tiny pointer file).
+# gdvim <name>[.gdoc]  — edit a Google Doc as plain text in vim (Drive for Desktop only mounts a tiny pointer file).
 # Downloads the Doc as text, opens vim, and uploads it back when you quit if it changed.
 # If no such Doc exists it offers to create one in the current Drive folder.
 # Auth borrows the rclone remote below (needs full "drive" scope). Rich formatting and links are flattened on save.
@@ -8,7 +8,7 @@ set -euo pipefail
 REMOTE="${GVIM_REMOTE:-gdrive}"
 API=https://www.googleapis.com
 
-[ $# -eq 1 ] || { echo "usage: gvim <name>[.gdoc]" >&2; exit 2; }
+[ $# -eq 1 ] || { echo "usage: gdvim <name>[.gdoc]" >&2; exit 2; }
 name="$1"
 
 drive=$(ls -d "$HOME"/Library/CloudStorage/GoogleDrive-*/"My Drive" 2>/dev/null | head -1 || true)
@@ -24,9 +24,9 @@ done
 
 id=""
 if [ -n "$f" ]; then
-  case "$f" in *.gsheet|*.gslides) echo "gvim: only Google Docs are supported" >&2; exit 1;; esac
+  case "$f" in *.gdsheet|*.gslides) echo "gdvim: only Google Docs are supported" >&2; exit 1;; esac
   id=$(jq -r '.doc_id // empty' "$f" 2>/dev/null || true)
-  [ -n "$id" ] || { echo "gvim: $f: not a .gdoc pointer file (use plain vim for normal files)" >&2; exit 1; }
+  [ -n "$id" ] || { echo "gdvim: $f: not a .gdoc pointer file (use plain vim for normal files)" >&2; exit 1; }
 fi
 
 # rclone refreshes an expired token on any call (slow: a call can take ~50s), so only make one when the saved
@@ -39,14 +39,14 @@ e = d.datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', sys.argv[1]).replace
 sys.exit(0 if e.timestamp() > d.datetime.now(e.tzinfo).timestamp() + 60 else 1)
 PY
 }
-if ! fresh; then rclone about "$REMOTE:" >/dev/null; cfg=$(rclone config dump); fi
+if ! fresh; then echo "gdvim: refreshing your Google login (can take up to a minute)..." >&2; rclone about "$REMOTE:" >/dev/null; cfg=$(rclone config dump); fi
 token=$(jq -r --arg r "$REMOTE" '.[$r].token | fromjson | .access_token' <<<"$cfg")
 auth="Authorization: Bearer $token"
 
 # ---- no such Doc: offer to create it in the folder you're standing in ----
 if [ -z "$id" ]; then
   title="${name%.gdoc}"; title="${title%.doc}"
-  case "$title" in */*|"") echo "gvim: $name: no such .gdoc (to create one, give a plain name without /)" >&2; exit 1;; esac
+  case "$title" in */*|"") echo "gdvim: $name: no such .gdoc (to create one, give a plain name without /)" >&2; exit 1;; esac
 
   # Folder path relative to My Drive; outside the mount we fall back to the top of My Drive.
   rel=""; inside=0
@@ -54,12 +54,12 @@ if [ -z "$id" ]; then
     case "$PWD/" in "$drive"/*) inside=1; rel="${PWD#"$drive"}"; rel="${rel#/}" ;; esac
   fi
   if [ "$inside" = 1 ]; then
-    printf 'gvim: no Doc named "%s". Create it in My Drive/%s? [y/N] ' "$title" "$rel"
+    printf 'gdvim: no Doc named "%s". Create it in My Drive/%s? [y/N] ' "$title" "$rel"
   else
-    printf 'gvim: no Doc named "%s". You are outside Drive; create it at the top of My Drive? [y/N] ' "$title"
+    printf 'gdvim: no Doc named "%s". You are outside Drive; create it at the top of My Drive? [y/N] ' "$title"
   fi
   read -r reply
-  case "$reply" in y|Y|yes) ;; *) echo "gvim: not created"; exit 1;; esac
+  case "$reply" in y|Y|yes) ;; *) echo "gdvim: not created"; exit 1;; esac
 
   # Walk the folder path from the root to find its folder id.
   parent=root
@@ -70,25 +70,47 @@ if [ -z "$id" ]; then
       parent=$(curl -sf -G -H "$auth" --data-urlencode "q=$q" --data-urlencode "fields=files(id)" \
         --data-urlencode "supportsAllDrives=true" --data-urlencode "includeItemsFromAllDrives=true" \
         "$API/drive/v3/files" | jq -r '.files[0].id // empty') \
-        || { echo "gvim: couldn't look up folder '$part'" >&2; exit 1; }
-      [ -n "$parent" ] || { echo "gvim: couldn't find folder '$part' in Drive" >&2; exit 1; }
+        || { echo "gdvim: couldn't look up folder '$part'" >&2; exit 1; }
+      [ -n "$parent" ] || { echo "gdvim: couldn't find folder '$part' in Drive" >&2; exit 1; }
     done
   fi
 
   body=$(jq -n --arg n "$title" --arg p "$parent" '{name:$n, mimeType:"application/vnd.google-apps.document", parents:[$p]}')
   id=$(curl -sf -X POST -H "$auth" -H "Content-Type: application/json" -d "$body" \
     "$API/drive/v3/files?fields=id&supportsAllDrives=true" | jq -r '.id // empty') \
-    || { echo "gvim: couldn't create the Doc" >&2; exit 1; }
-  [ -n "$id" ] || { echo "gvim: couldn't create the Doc" >&2; exit 1; }
-  echo "gvim: created \"$title\" (the .gdoc file shows up in Finder after Drive syncs)"
+    || { echo "gdvim: couldn't create the Doc" >&2; exit 1; }
+  [ -n "$id" ] || { echo "gdvim: couldn't create the Doc" >&2; exit 1; }
+  echo "gdvim: created \"$title\" (the .gdoc file shows up in Finder after Drive syncs)"
+  created=1
 fi
 
-meta() { curl -sf -H "$auth" "$API/drive/v3/files/$id?fields=modifiedTime,mimeType,name&supportsAllDrives=true"; }
-before=$(meta) || { echo "gvim: couldn't read the Doc (is the $REMOTE remote signed in?)" >&2; exit 1; }
-[ "$(jq -r .mimeType <<<"$before")" = application/vnd.google-apps.document ] || { echo "gvim: not a Google Doc" >&2; exit 1; }
+# Read the Doc's metadata. A Doc created a moment ago can take a second or two to become readable, so retry;
+# on failure show what Google actually said instead of guessing.
+meta() {
+  local out code i
+  for i in 1 2 3 4 5; do
+    out=$(curl -s -w '\n%{http_code}' -H "$auth" "$API/drive/v3/files/$id?fields=modifiedTime,mimeType,name&supportsAllDrives=true") || true
+    code="${out##*$'\n'}"; out="${out%$'\n'*}"
+    if [ "$code" = 200 ]; then printf '%s' "$out"; return 0; fi
+    if [ "$code" = 404 ]; then sleep 2; continue; fi                       # brand-new Doc not readable yet
+    if [ "$code" = 429 ] || { [ "$code" = 403 ] && grep -qi 'quota\|rate' <<<"$out"; }; then
+      echo "gdvim: Google is rate-limiting this login (requests per minute); waiting 20s ($i/5)..." >&2
+      sleep 20; continue
+    fi
+    break
+  done
+  echo "gdvim: Drive returned HTTP $code: $(jq -r '.error.message // empty' <<<"$out" 2>/dev/null)" >&2
+  return 1
+}
+before=$(meta) || {
+  echo "gdvim: couldn't read the Doc (id $id)" >&2
+  [ "${created:-0}" = 1 ] && echo "      it WAS created — run gdvim \"$title\" again once it syncs; don't answer y to create it twice" >&2
+  exit 1
+}
+[ "$(jq -r .mimeType <<<"$before")" = application/vnd.google-apps.document ] || { echo "gdvim: not a Google Doc" >&2; exit 1; }
 
-tmp=$(mktemp -t gvim).txt
-backup_dir="$HOME/.cache/gvim"; mkdir -p "$backup_dir"
+tmp=$(mktemp -t gdvim).txt
+backup_dir="$HOME/.cache/gdvim"; mkdir -p "$backup_dir"
 trap '[ "${keep:-0}" = 1 ] || rm -f "$tmp"' EXIT
 
 # Docs exports CRLF line endings and a BOM; strip both so vim shows clean text (and saves don't add blank paragraphs).
@@ -98,18 +120,18 @@ orig=$(md5 -q "$tmp")
 
 vim "$tmp"
 
-if [ "$(md5 -q "$tmp")" = "$orig" ]; then echo "gvim: no changes"; exit 0; fi
+if [ "$(md5 -q "$tmp")" = "$orig" ]; then echo "gdvim: no changes"; exit 0; fi
 
 # Don't clobber edits made elsewhere while vim was open.
 now=$(meta)
 if [ "$(jq -r .modifiedTime <<<"$now")" != "$(jq -r .modifiedTime <<<"$before")" ]; then
   keep=1
-  echo "gvim: the Doc changed on Google's side while you were editing — not uploading." >&2
+  echo "gdvim: the Doc changed on Google's side while you were editing — not uploading." >&2
   echo "      your edits are in $tmp" >&2
   exit 1
 fi
 
 curl -sf -X PATCH -H "$auth" -H "Content-Type: text/plain" --data-binary @"$tmp" \
   "$API/upload/drive/v3/files/$id?uploadType=media&supportsAllDrives=true" >/dev/null \
-  || { keep=1; echo "gvim: upload failed — your edits are in $tmp" >&2; exit 1; }
-echo "gvim: saved $(jq -r .name <<<"$before")"
+  || { keep=1; echo "gdvim: upload failed — your edits are in $tmp" >&2; exit 1; }
+echo "gdvim: saved $(jq -r .name <<<"$before")"

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Copies gvim, gopen and gmove into ~/.local/bin and checks what they need.
+# Copies gdvim, gdopen, gdmove, gdsheet and gdcat into ~/.local/bin and checks what they need.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 dest="$HOME/.local/bin"
 mkdir -p "$dest"
-for s in gvim gopen gmove; do
+for s in gdvim gdopen gdmove gdsheet gdcat; do
   install -m 755 "$here/$s" "$dest/$s"
   echo "installed $dest/$s"
 done
