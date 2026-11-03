@@ -19,6 +19,7 @@ const DEFAULT_ALIASES = {
   cat: 'open',
   opens: "open -a 'google chrome'",
   gdopen: 'web',
+  finds: 'find -d -here', // folder-name search under the current folder
   c: 'cd',
   '..': 'cd ..',
   trees: `echo 'tree -d -L 2 -I "node_modules"'`,
@@ -38,7 +39,9 @@ const HELP = [
   'mkdir <name>          create a folder',
   'vim <name>            open a file, creating it if new (name.txt = text file, no extension = Google Doc)',
   'recent                10 most recently viewed Docs/Sheets (numbered)',
-  'find <text>           search all of Drive by name (numbered)',
+  'find [-d] <text>      search all of Drive by name (numbered); -d = folders only',
+  'find -here [-d] [-L N] <text>   search only under the current folder (default 3 levels, max 6)',
+  'finds <text>          alias for  find -d -here  : folder names under here, with where each lives',
   'tree [-d] [-L N] [-I "a|b*"] [path]   folder tree (default depth 2, max 6)',
   'echo <text>           print text',
   'clear                 clear the screen (also Ctrl+L)',
@@ -250,6 +253,8 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     }
     let stack = path.startsWith('/') || path === '~' || path.startsWith('~/') ? [...ROOT] : [...cwd];
     const parts = path.replace(/^~/, '').split('/').filter((p) => p && p !== '.');
+    // pwd prints "/My Drive/Documents/…", so accept that spelling too (unless a real folder is named "My Drive").
+    if (path.startsWith('/') && parts[0] === ROOT[0].name && !findChild(await listFolder('root'), parts[0], 'folder')) parts.shift();
     if (parts.length === 0) return { stack: stack.slice(0, -1), entry: { ...stack[stack.length - 1], mimeType: FOLDER_MIME } };
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
@@ -556,14 +561,14 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
         : null;
 
       let root = { ...cwd[cwd.length - 1], mimeType: FOLDER_MIME };
-      let rootPath = '/' + cwd.slice(1).map((c) => c.name).join('/');
+      let rootPath = '/' + cwd.map((c) => c.name).join('/');
       if (target) {
         const res = await resolveTarget(target, 'folder');
         root = res.entry;
         if (root.mimeType !== FOLDER_MIME) throw new Error(`tree: ${target}: Not a folder`);
-        // Full path from My Drive, so clicking nested entries works from any folder.
+        // Full path (same spelling as pwd), so clicking nested entries works from any folder.
         const above = res.stack || (await ancestorsOf(root));
-        rootPath = '/' + [...above.slice(1), root].map((c) => c.name).join('/');
+        rootPath = '/' + [...above, root].map((c) => c.name).join('/');
       }
 
       // Fetch level by level, listing sibling folders in parallel.
@@ -607,14 +612,59 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       printNumbered(data.files || []);
     },
 
+    // find [-d] [-here] [-L N] <text>. Plain: all of Drive by name. -here: only under the current folder,
+    // walking level by level (Drive can't query "all descendants"), so depth is capped like tree.
     find: async (args) => {
-      const text = args.join(' ');
-      if (!text) throw new Error('usage: find <text>');
-      const q = encodeURIComponent(`name contains '${text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' and trashed=false`);
-      const data = await api(
-        `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=viewedByMeTime+desc&pageSize=25&fields=files(id,name,mimeType,parents)`
-      );
-      printNumbered(data.files || []);
+      let dirsOnly = false;
+      let here = false;
+      let maxDepth = 3;
+      const words = [];
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (a === '-d') dirsOnly = true;
+        else if (a === '-here') here = true;
+        else if (a === '-L') maxDepth = parseInt(args[++i], 10);
+        else words.push(a);
+      }
+      const text = words.join(' ');
+      if (!text) throw new Error('usage: find [-d] [-here] [-L N] <text>');
+      if (!Number.isInteger(maxDepth) || maxDepth < 1 || maxDepth > 6) throw new Error('find: -L needs a number from 1 to 6');
+
+      if (!here) {
+        const esc = text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        const q = encodeURIComponent(`name contains '${esc}' and trashed=false${dirsOnly ? ` and mimeType='${FOLDER_MIME}'` : ''}`);
+        const data = await api(
+          `https://www.googleapis.com/drive/v3/files?q=${q}&orderBy=viewedByMeTime+desc&pageSize=25&fields=files(id,name,mimeType,parents)`
+        );
+        printNumbered(data.files || []);
+        return;
+      }
+
+      const LIMIT = 50;
+      const needle = text.toLowerCase();
+      const base = cwd.map((c) => c.name); // same spelling as pwd, for full paths
+      const hits = [];
+      let frontier = [{ id: cwd[cwd.length - 1].id, rel: [] }];
+      for (let depth = 1; depth <= maxDepth && frontier.length && hits.length < LIMIT; depth++) {
+        const lists = await Promise.all(frontier.map((f) => listFolder(f.id).catch(() => [])));
+        const next = [];
+        frontier.forEach((f, i) => {
+          const parentPath = '/' + [...base, ...f.rel].join('/');
+          lists[i].forEach((e) => {
+            const isFolder = e.mimeType === FOLDER_MIME;
+            if (e.name.toLowerCase().includes(needle) && (!dirsOnly || isFolder)) {
+              hits.push({ ...e, parents: [f.id], fullPath: (parentPath === '/' ? '' : parentPath) + '/' + e.name, where: parentPath });
+            }
+            if (isFolder) next.push({ id: e.id, rel: [...f.rel, e.name] });
+          });
+        });
+        frontier = next;
+      }
+      const shown = hits.slice(0, LIMIT);
+      printNumbered(shown);
+      if (shown.length) {
+        print('out', `${shown.length}${hits.length > LIMIT ? '+' : ''} match${shown.length === 1 ? '' : 'es'} under ${pathString(cwd)}, up to ${maxDepth} level${maxDepth === 1 ? '' : 's'} deep (-L N goes deeper)`);
+      }
     },
   };
   commands.echo = async (args) => print('out', args.join(' '));
@@ -808,31 +858,48 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       const idx = historyIdxRef.current + 1;
       if (idx >= hist.length) { historyIdxRef.current = -1; setInput(''); }
       else { historyIdxRef.current = idx; setInput(hist[idx]); }
-    } else if (e.key === 'l' && e.ctrlKey) {
+    } else if (e.key.toLowerCase() === 'l' && e.ctrlKey) {
       e.preventDefault();
       setLines([]);
-    } else if (e.key === 'c' && e.ctrlKey && !window.getSelection()?.toString()) {
+    } else if (e.key.toLowerCase() === 'c' && e.ctrlKey && e.target.selectionStart === e.target.selectionEnd) {
+      // Like zsh: abandon the line. Only text selected inside the input keeps Ctrl+C as a normal copy
+      // (a stray selection elsewhere on the page used to block this).
       e.preventDefault();
       print('cmd', input + '^C', { prompt: pathString(cwd) });
       setInput('');
+      historyIdxRef.current = -1;
+      cycleRef.current = null;
     }
   };
 
-  // Clicking an entry: folders cd into it, files open in the viewer. Tree entries carry a full
-  // path because nested ones aren't in the current folder.
-  const clickEntry = (f) => {
+  // Clicking an entry: folders cd into it, files open in the viewer. Entries that can live anywhere
+  // (tree output, find/recent results) are clicked by full path, spelled out first, so it works from any folder.
+  const clickEntry = async (f) => {
     if (busy) return;
-    run(`${f.mimeType === FOLDER_MIME ? 'cd' : 'open'} ${quoteArg(f.fullPath || f.name)}`);
+    let target = f.fullPath;
+    if (!target && f.id && f.parents) {
+      try {
+        const chain = await ancestorsOf(f);
+        // Under My Drive: the same path pwd would show. Anywhere else (shared items): the item's link, which cd/open accept.
+        target = chain[0]?.id === 'root' ? '/' + [...chain.map((c) => c.name), f.name].join('/') : driveUrl(f);
+      } catch {
+        target = driveUrl(f);
+      }
+    }
+    run(`${f.mimeType === FOLDER_MIME ? 'cd' : 'open'} ${quoteArg(target || f.name)}`);
   };
 
   const renderName = (f) => (
-    <span
-      className={`term-entry ${f.mimeType === FOLDER_MIME ? 'term-folder' : 'term-file'}`}
-      onClick={() => clickEntry(f)}
-      title={f.mimeType === FOLDER_MIME ? 'cd' : 'open'}
-    >
-      {iconFor(f.mimeType)} {f.name}{f.mimeType === FOLDER_MIME ? '/' : ''}
-    </span>
+    <>
+      <span
+        className={`term-entry ${f.mimeType === FOLDER_MIME ? 'term-folder' : 'term-file'}`}
+        onClick={() => clickEntry(f)}
+        title={f.mimeType === FOLDER_MIME ? 'cd' : 'open'}
+      >
+        {iconFor(f.mimeType)} {f.name}{f.mimeType === FOLDER_MIME ? '/' : ''}
+      </span>
+      {f.where && <span style={{ opacity: 0.55 }}>{`  in ${f.where}`}</span>}
+    </>
   );
 
   return (
@@ -846,7 +913,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
               const text = lines.map((l) => {
                 if (l.type === 'cmd') return `${l.prompt} $ ${l.text}`;
                 if (l.type === 'grid') return l.files.map((f) => f.name + (f.mimeType === FOLDER_MIME ? '/' : '')).join('  ');
-                if (l.type === 'entry') return l.text + l.file.name + (l.file.mimeType === FOLDER_MIME ? '/' : '');
+                if (l.type === 'entry') return l.text + l.file.name + (l.file.mimeType === FOLDER_MIME ? '/' : '') + (l.file.where ? `  in ${l.file.where}` : '');
                 if (l.type === 'link') return l.text + l.url;
                 return l.text;
               }).join('\n');
