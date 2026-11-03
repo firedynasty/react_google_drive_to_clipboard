@@ -18,6 +18,7 @@ const DEFAULT_ALIASES = {
   l: 'ls',
   cat: 'open',
   opens: "open -a 'google chrome'",
+  gdopen: 'web',
   c: 'cd',
   '..': 'cd ..',
   trees: `echo 'tree -d -L 2 -I "node_modules"'`,
@@ -29,7 +30,7 @@ const HELP = [
   'pwd                   print current path',
   'open <name|#>         load a file into the viewer',
   'open -a chrome <name> open in a new browser tab (Docs/Sheets editor); also: web <name>',
-  'web                   open the current folder in Google Drive',
+  'web [name|#]          open in a new browser tab by link (no name = current folder); alias: gdopen',
   'which <name|#>        print full path + link   ( which notes | pbcopy )',
   'mv <src...> <dest>    move into folder dest, or rename a single src',
   'cp <src> [dest]       copy a file (Drive copy) into a folder or as a new name',
@@ -49,7 +50,7 @@ const HELP = [
   'Pipes:  cmd | pbcopy    cmd | grep [-i|-v] text    cmd | head [-n N]    cmd | wc -l',
   '        e.g.  pwd | pbcopy     dir | grep -i chess | pbcopy',
   '',
-  'Tab completes names, ↑/↓ walk history, # refers to the last recent/find list.',
+  'Tab completes names (press Tab again to cycle matches, Shift+Tab back), ↑/↓ walk history, # refers to the last recent/find list.',
   'Anywhere a name goes you can paste a Drive link:  mv notes https://drive.google.com/drive/folders/…',
 ];
 
@@ -154,6 +155,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
   const [busy, setBusy] = useState(false);
   const historyRef = useRef(loadJSON(HISTORY_KEY, []));
   const historyIdxRef = useRef(-1);
+  const cycleRef = useRef(null); // Tab cycling through several matches: { list, idx }
   const cacheRef = useRef(new Map()); // folderId -> entries
   const numberedRef = useRef([]); // last recent/find list, for "open 3"
   const inputRef = useRef(null);
@@ -397,14 +399,23 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       openFile(created.id, created.name, created.mimeType, { edit: true });
     },
 
+    // Open in a new browser tab by link (the web twin of the Mac terminal's gdopen). The tab is opened
+    // before any network call: browsers block window.open once an await has used up the click/Enter.
     web: async (args) => {
-      // No name → the current folder in Drive.
-      const { entry } = args[0]
-        ? await resolveTarget(args[0])
-        : { entry: { ...cwd[cwd.length - 1], mimeType: FOLDER_MIME } };
-      const url = driveUrl(entry);
-      window.open(url, '_blank', 'noopener');
-      print('link', `→ ${entry.name}  `, { url }); // clickable fallback if the popup was blocked
+      const tab = window.open('', '_blank');
+      if (tab) tab.opener = null;
+      try {
+        // No name → the current folder in Drive.
+        const { entry } = args[0]
+          ? await resolveTarget(args[0])
+          : { entry: { ...cwd[cwd.length - 1], mimeType: FOLDER_MIME } };
+        const url = driveUrl(entry);
+        if (tab) tab.location.href = url;
+        print('link', `→ ${entry.name}  `, { url }); // clickable fallback if the popup was blocked
+      } catch (e) {
+        if (tab) tab.close();
+        throw e;
+      }
     },
 
     which: async (args) => {
@@ -714,7 +725,15 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     }
   };
 
-  const complete = async () => {
+  const complete = async (reverse = false) => {
+    // Already cycling and the input is still the candidate we filled in: Tab moves to the next one (Shift+Tab back).
+    const cycle = cycleRef.current;
+    if (cycle && cycle.list[cycle.idx] === input) {
+      cycle.idx = (cycle.idx + (reverse ? cycle.list.length - 1 : 1)) % cycle.list.length;
+      setInput(cycle.list[cycle.idx]);
+      return;
+    }
+    cycleRef.current = null;
     const { tokens, lastStart, endsWithSpace } = tokenize(input);
     if (tokens.length === 0 || (tokens.length === 1 && !endsWithSpace)) {
       const partial = tokens[0] || '';
@@ -747,8 +766,20 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       for (const m of matches) {
         while (!m.name.toLowerCase().startsWith(prefix.toLowerCase())) prefix = prefix.slice(0, -1);
       }
-      if (prefix.length > namePart.length) setInput(input.slice(0, lastStart) + quoteArg(dirPart + prefix));
-      else print('grid', '', { files: matches });
+      if (prefix.length > namePart.length) {
+        setInput(input.slice(0, lastStart) + quoteArg(dirPart + prefix));
+        return;
+      }
+      // Can't extend further: list the candidates once, fill in the first, and let more Tabs cycle.
+      print('grid', '', { files: matches });
+      const head = input.slice(0, lastStart);
+      const list = matches.map((e) => {
+        const done = withSlash(e);
+        return head + quoteArg(done) + (done.endsWith('/') ? '' : ' ');
+      });
+      const idx = reverse ? list.length - 1 : 0;
+      cycleRef.current = { list, idx };
+      setInput(list[idx]);
     } catch {
       /* no completion */
     }
@@ -764,7 +795,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       run(line);
     } else if (e.key === 'Tab') {
       e.preventDefault();
-      complete();
+      complete(e.shiftKey);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (hist.length === 0) return;
