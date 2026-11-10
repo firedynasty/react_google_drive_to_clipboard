@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 import DriveTerminal from './DriveTerminal';
@@ -111,6 +111,48 @@ function driveFileUrl(fileId, mimeType) {
   return `https://drive.google.com/file/d/${fileId}/view`;
 }
 
+// ── PARAGRAPH STASH ──────────────────────────────────────────────────────────
+// A doc opened in the file modal can be read a paragraph at a time and the
+// paragraphs you want collected into a stash, which you then paste somewhere
+// that wants prose — Topic Teacher's Material box, a chapter at a time.
+//
+// This is the web version of ~/.clipboard_collect.md and the clipboard_*.sh
+// scripts: a running tab you add to, peek at, copy whole, and clear. Two
+// differences, both because a page can do what a shell file cannot:
+//   - picking TOGGLES. The scripts could only append, so a mis-copy meant
+//     editing the file; here a second click takes the paragraph back out.
+//   - Copy All emits document order, not click order, so a chapter reads
+//     straight through however you happened to pick at it.
+const STASH_KEY = 'drive_paragraph_stash';
+
+// A paragraph is blank-line separated, the same rule formatEmailBody already
+// renders with, so what you pick matches what you see. A doc saved with no
+// blank lines at all would be one giant paragraph and unpickable, so fall back
+// to single lines in that case.
+function splitParagraphs(text) {
+  if (!text) return [];
+  const byBlank = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  if (byBlank.length > 1) return byBlank;
+  return text.split(/\n/).map(s => s.trim()).filter(Boolean);
+}
+
+// Grouped by the file each paragraph came from, document order within a file,
+// files in the order you first picked from them. Entries are separated the way
+// the collect scripts separate them, so text copied out of here can go back
+// through clipboard_collect_split.sh and come out as the same chunks.
+function stashToText(stash) {
+  const order = [];
+  const byFile = new Map();
+  stash.forEach(item => {
+    if (!byFile.has(item.fileId)) { byFile.set(item.fileId, []); order.push(item.fileId); }
+    byFile.get(item.fileId).push(item);
+  });
+  return order.map(fileId => byFile.get(fileId)
+    .slice().sort((a, b) => a.idx - b.idx)
+    .map(i => i.text).join('\n\n')
+  ).join('\n\n---\n\n');
+}
+
 // Clean up pasted notes: collapse runs of blank lines down to a single
 // blank line (\n\n), and fold a bare timestamp line ("2:54") sitting under
 // a YouTube URL into that URL's &t= param — same math as the old copy-URL
@@ -185,6 +227,16 @@ function DriveSearch() {
   const [pendingFileId, setPendingFileId] = useState('');
   const [pendingFileMimeType, setPendingFileMimeType] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(2);
+  // Paragraph stash (see PARAGRAPH STASH above). Restored from localStorage so
+  // closing the modal, switching docs or reloading the tab does not lose picks —
+  // the stash is a session's worth of collecting, not one document's.
+  const [pickMode, setPickMode] = useState(() => {
+    try { return localStorage.getItem('drive_pick_mode') === '1'; } catch (e) { return false; }
+  });
+  const [stash, setStash] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(STASH_KEY)) || []; } catch (e) { return []; }
+  });
+  const [stashOpen, setStashOpen] = useState(false);
   const [appendNote, setAppendNote] = useState('');
   const [pendingNotes, setPendingNotes] = useState([]); // queued notes not yet saved to Drive
   const [savingNotes, setSavingNotes] = useState(false);
@@ -867,6 +919,59 @@ function DriveSearch() {
     setPendingNotes([]);
     setShowRowInput(false);
     setFileFormatted(false);
+  };
+
+  // ── Paragraph stash ────────────────────────────────────────────────────────
+  useEffect(() => {
+    try { localStorage.setItem(STASH_KEY, JSON.stringify(stash)); } catch (e) {}
+  }, [stash]);
+
+  useEffect(() => {
+    try { localStorage.setItem('drive_pick_mode', pickMode ? '1' : '0'); } catch (e) {}
+  }, [pickMode]);
+
+  const paragraphs = useMemo(
+    () => (pickMode ? splitParagraphs(fileContent) : []),
+    [pickMode, fileContent]
+  );
+
+  // Identity is file + position, not the text: two paragraphs in a doc can read
+  // the same ("Mr. Bennet made no answer.") and must still pick independently.
+  const isPicked = (idx) => stash.some(i => i.fileId === currentFileId && i.idx === idx);
+
+  const togglePick = (idx, text) => {
+    setStash(prev => {
+      const at = prev.findIndex(i => i.fileId === currentFileId && i.idx === idx);
+      if (at >= 0) return prev.filter((_, n) => n !== at);
+      return [...prev, { fileId: currentFileId, fileName: currentFileName, idx, text }];
+    });
+  };
+
+  const copyStash = async () => {
+    if (stash.length === 0) return;
+    const text = stashToText(stash);
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus(`Copied ${stash.length} paragraph(s), ${text.length} chars \u2014 paste into Topic Teacher`);
+    } catch (e) {
+      // Safari and any non-secure context refuse writeText; the textarea trick
+      // still works there because it rides on a real user gesture.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setStatus(`Copied ${stash.length} paragraph(s), ${text.length} chars`);
+    }
+  };
+
+  const clearStash = () => {
+    if (stash.length === 0) return;
+    if (!window.confirm(`Clear all ${stash.length} stashed paragraph(s)?`)) return;
+    setStash([]);
+    setStashOpen(false);
+    setStatus('Stash cleared');
   };
 
   // Queue a note locally (updates the view immediately) — no API call until Save.
@@ -1875,6 +1980,13 @@ function DriveSearch() {
                       >
                         TXT&gt;MD
                       </button>
+                      <button
+                        className={`txt-md-toggle-btn${pickMode ? ' active' : ''}`}
+                        onClick={() => setPickMode((v) => !v)}
+                        title="Read this doc a paragraph at a time and click the ones you want. Picked paragraphs collect in the stash, to copy out and paste into Topic Teacher."
+                      >
+                        &para; Pick
+                      </button>
                     </>
                   )}
                   {currentFileMimeType === 'application/vnd.google-apps.spreadsheet' ? (
@@ -1943,6 +2055,56 @@ function DriveSearch() {
                   </button>
                 </div>
               </div>
+              {/* The stash bar — the navbar the clipboard_*.sh scripts gave the shell:
+                  a count to peek at, copy whole, and clear. Shown whenever picking is
+                  on OR the stash has anything in it, so a stash collected in one doc
+                  stays reachable while you read the next. */}
+              {(pickMode || stash.length > 0) && (
+                <div className="stash-bar">
+                  <button
+                    className={`stash-count${stashOpen ? ' active' : ''}`}
+                    onClick={() => setStashOpen((v) => !v)}
+                    disabled={stash.length === 0}
+                    title="Show what is in the stash"
+                  >
+                    &para; Stash ({stash.length})
+                  </button>
+                  <span className="stash-chars">
+                    {stash.length > 0 ? `${stashToText(stash).length.toLocaleString()} chars` : 'nothing picked yet'}
+                  </span>
+                  <div className="stash-actions">
+                    <button onClick={copyStash} disabled={stash.length === 0} title="Copy every stashed paragraph, in document order, ready to paste into Topic Teacher's Material box">
+                      Copy All
+                    </button>
+                    <button className="stash-clear" onClick={clearStash} disabled={stash.length === 0} title="Empty the stash">
+                      Clear
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {stashOpen && stash.length > 0 && (
+                <div className="stash-panel">
+                  {stash.map((item) => (
+                    <div className="stash-item" key={`${item.fileId}-${item.idx}`}>
+                      <div className="stash-item-head">
+                        <span className="stash-item-src" title={item.fileName}>
+                          {item.fileName} &middot; &para;{item.idx + 1}
+                        </span>
+                        <button
+                          className="stash-item-del"
+                          onClick={() => setStash(prev => prev.filter(i => !(i.fileId === item.fileId && i.idx === item.idx)))}
+                          title="Take this paragraph out of the stash"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                      <div className="stash-item-text">{item.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {isEditMode ? (
                 <VimEditor
                   value={editContent}
@@ -1978,6 +2140,22 @@ function DriveSearch() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+              ) : pickMode ? (
+                <div ref={contentScrollRef} className="para-pick" style={{ fontSize: `${fileFontSize}px` }}>
+                  {paragraphs.length === 0 ? (
+                    <div className="para-empty">Nothing to pick — this file has no text.</div>
+                  ) : paragraphs.map((text, idx) => (
+                    <div
+                      key={idx}
+                      className={`para${isPicked(idx) ? ' picked' : ''}`}
+                      onClick={() => togglePick(idx, text)}
+                      title={isPicked(idx) ? 'Click to take it back out' : 'Click to add it to the stash'}
+                    >
+                      <span className="para-num">{idx + 1}</span>
+                      <span className="para-text">{text}</span>
+                    </div>
+                  ))}
                 </div>
               ) : fileFormatted ? (
                 <div
