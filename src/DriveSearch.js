@@ -227,12 +227,13 @@ function DriveSearch() {
   const [pendingFileId, setPendingFileId] = useState('');
   const [pendingFileMimeType, setPendingFileMimeType] = useState('');
   const [copyCellIndex, setCopyCellIndex] = useState(2);
-  // Paragraph stash (see PARAGRAPH STASH above). Restored from localStorage so
-  // closing the modal, switching docs or reloading the tab does not lose picks —
-  // the stash is a session's worth of collecting, not one document's.
-  const [pickMode, setPickMode] = useState(() => {
-    try { return localStorage.getItem('drive_pick_mode') === '1'; } catch (e) { return false; }
-  });
+  // Paragraph stash (see PARAGRAPH STASH above). Picking is the point of opening
+  // a doc here, so it starts ON at every load and is deliberately NOT restored:
+  // turning it off is a per-document detour, not a preference worth remembering.
+  const [pickMode, setPickMode] = useState(true);
+  // The picks themselves ARE restored, so closing the modal, switching docs or
+  // reloading the tab does not lose them — the stash is a session's worth of
+  // collecting, not one document's.
   const [stash, setStash] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STASH_KEY)) || []; } catch (e) { return []; }
   });
@@ -925,10 +926,6 @@ function DriveSearch() {
   useEffect(() => {
     try { localStorage.setItem(STASH_KEY, JSON.stringify(stash)); } catch (e) {}
   }, [stash]);
-
-  useEffect(() => {
-    try { localStorage.setItem('drive_pick_mode', pickMode ? '1' : '0'); } catch (e) {}
-  }, [pickMode]);
 
   const paragraphs = useMemo(
     () => (pickMode ? splitParagraphs(fileContent) : []),
