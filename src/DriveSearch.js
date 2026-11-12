@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import mammoth from 'mammoth';
 import DriveTerminal from './DriveTerminal';
 import VimEditor from './VimEditor';
+import NoteReadingControls, { useNoteReadingPreferences } from './NoteReadingControls';
 
 const CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 const SCOPES = 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly';
@@ -191,6 +192,7 @@ function formatNotesContent(text) {
 }
 
 function DriveSearch() {
+  const noteReadingPreferences = useNoteReadingPreferences();
   const [accessToken, setAccessToken] = useState(null);
   const [status, setStatus] = useState('');
   const [tokenClient, setTokenClient] = useState(null);
@@ -1870,7 +1872,7 @@ function DriveSearch() {
   }
 
   return (
-    <div className="drive-search" data-theme={uiTheme}>
+    <div className={`drive-search${terminalOpen && accessToken ? ' has-terminal' : ''}`} data-theme={uiTheme}>
       <h1>Drive Search</h1>
 
       {!accessToken ? (
@@ -1884,6 +1886,7 @@ function DriveSearch() {
               <button onClick={handleSignOut} className="sign-out-btn">
                 Sign Out
               </button>
+              <NoteReadingControls preferences={noteReadingPreferences} />
             </div>
             {emails.length > 0 && (
               <div className="toggle-group">
@@ -2276,6 +2279,7 @@ function DriveSearch() {
                 <DriveTerminal
                   ensureFreshToken={ensureFreshToken}
                   openFile={handleFileClick}
+                  readingPreferences={noteReadingPreferences}
                   onClose={() => setTerminalOpen(false)}
                   visible={terminalOpen}
                   modalOpen={!!(fileContent || currentFileId)}

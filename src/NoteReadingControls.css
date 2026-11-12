@@ -1,0 +1,8 @@
+.search-area .search-box { flex-wrap: wrap; align-items: center; }
+.note-reading-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.search-area .note-reading-controls button { padding: 9px 10px; font-size: 12px; line-height: 1.4; border: 1px solid var(--dt-term-border, #3c4656); border-radius: 6px; background: var(--dt-explorer-bg, #16213e); color: var(--dt-term-text, #ddd); }
+.search-area .note-reading-controls button:hover:not(:disabled) { background: var(--dt-explorer-hover, #293f65); }
+.search-area .note-reading-controls .txt-md-toggle-btn.active { background: var(--dt-explorer-hover, #0f3460); border-color: var(--dt-folder-color, #00d4ff); color: var(--dt-folder-color, #00d4ff); }
+.search-area .note-reading-controls button:disabled { opacity: .4; cursor: default; }
+.note-reading-controls output { min-width: 33px; text-align: center; font-size: 12px; color: #ddd; }
+.note-reading-controls button:focus-visible { outline: 2px solid var(--dt-folder-color, #80baff); outline-offset: 2px; }

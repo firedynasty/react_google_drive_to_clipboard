@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Copies gdvim, gdopen, gdmove, gdsheet and gdcat into ~/.local/bin and checks what they need.
+# Copies gdvim, gdopen, gdmove, gdsheet, gdcat and gdwatch into ~/.local/bin and checks what they need.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 dest="$HOME/.local/bin"
 mkdir -p "$dest"
-for s in gdvim gdopen gdmove gdsheet gdcat; do
+for s in gdvim gdopen gdmove gdsheet gdcat gdwatch; do
   install -m 755 "$here/$s" "$dest/$s"
   echo "installed $dest/$s"
+done
+
+reader="$HOME/.local/lib/gdwatch"
+mkdir -p "$reader"
+for asset in server.py index.html; do
+  install -m 644 "$here/drive_reader/$asset" "$reader/$asset"
 done
 
 case ":$PATH:" in *":$dest:"*) ;; *) echo "note: $dest is not in your PATH — add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;; esac

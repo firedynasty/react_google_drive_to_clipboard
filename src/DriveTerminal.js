@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import DriveExplorer from './DriveExplorer';
+import DriveNotesFeed from './DriveNotesFeed';
 
 // Bash-style shell over the Google Drive API: cd / ls / mv / rm / mkdir / open / recent / find.
 // The current folder and command history persist in localStorage so the shell "stays" where you left it.
@@ -10,6 +12,9 @@ const ROOT = [{ id: 'root', name: 'My Drive' }];
 const CWD_KEY = 'driveTerminal.cwd';
 const HISTORY_KEY = 'driveTerminal.history';
 const ALIAS_KEY = 'driveTerminal.aliases';
+const RECENT_FOLDERS_KEY = 'driveTerminal.recentFolders';
+const EXPLORER_KEY = 'driveTerminal.explorer';
+const NOTES_KEY = 'driveTerminal.notesFeed';
 // Starting "~/.zshrc" — edit with alias / unalias, saved per browser.
 const DEFAULT_ALIASES = {
   dir: 'ls',
@@ -29,6 +34,7 @@ const HELP = [
   'ls [-l] [path]        list folder (click an entry to cd/open it)',
   'cd [path]             change folder  ( ..  /  ~  a/b  "name with spaces" )',
   'pwd                   print current path',
+  'gdwatch [stop|status]  read all notes in this folder together below the shell; follows cd',
   'open <name|#>         load a file into the viewer',
   'open -a chrome <name> open in a new browser tab (Docs/Sheets editor); also: web <name>',
   'web [name|#]          open in a new browser tab by link (no name = current folder); alias: gdopen',
@@ -54,6 +60,7 @@ const HELP = [
   '        e.g.  pwd | pbcopy     dir | grep -i chess | pbcopy',
   '',
   'Tab completes names (press Tab again to cycle matches, Shift+Tab back), ↑/↓ walk history, # refers to the last recent/find list.',
+  'Right-click a file in the explorer or terminal to gdopen it in a new browser window.',
   'Anywhere a name goes you can paste a Drive link:  mv notes https://drive.google.com/drive/folders/…',
 ];
 
@@ -151,11 +158,42 @@ const pathString = (cwd) => {
   return cwd.length === 1 ? '~' : '~/' + cwd.slice(1).map((c) => c.name).join('/');
 };
 
-const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, modalOpen = false }) => {
-  const [cwd, setCwd] = useState(() => loadJSON(CWD_KEY, ROOT));
+const isFolderStack = (value) => Array.isArray(value) && value.length > 0 &&
+  value.every((folder) => folder && typeof folder.id === 'string' && typeof folder.name === 'string');
+
+// Newest visits come first; keep one entry per folder name, even across different parents.
+const uniqueRecentFolders = (stacks) => {
+  const ids = new Set();
+  const names = new Set();
+  return stacks.filter(isFolderStack).filter((stack) => {
+    const folder = stack[stack.length - 1];
+    const name = folder.name.toLowerCase();
+    if (ids.has(folder.id) || names.has(name)) return false;
+    ids.add(folder.id);
+    names.add(name);
+    return true;
+  }).slice(0, 6);
+};
+
+const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, modalOpen = false, readingPreferences }) => {
+  const [cwd, setCwd] = useState(() => {
+    const saved = loadJSON(CWD_KEY, ROOT);
+    return isFolderStack(saved) ? saved : ROOT;
+  });
+  const [recentFolders, setRecentFolders] = useState(() => {
+    const saved = loadJSON(RECENT_FOLDERS_KEY, []);
+    return Array.isArray(saved) ? uniqueRecentFolders(saved) : [];
+  });
+  const [notesOpen, setNotesOpen] = useState(() => loadJSON(NOTES_KEY, false) === true);
+  const notesRef = useRef(null);
+  const [explorerOpen, setExplorerOpen] = useState(() => loadJSON(EXPLORER_KEY, true) !== false);
+  const [navigation, setNavigation] = useState(() => ({ entries: [cwd], index: 0 }));
+  const [listing, setListing] = useState({ id: null, files: [], loading: false, error: '' });
+  const [folderVersion, setFolderVersion] = useState(0);
   const [lines, setLines] = useState([{ type: 'out', text: 'Drive shell — type "help" for commands.' }]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
   const historyRef = useRef(loadJSON(HISTORY_KEY, []));
   const historyIdxRef = useRef(-1);
   const cycleRef = useRef(null); // Tab cycling through several matches: { list, idx }
@@ -165,6 +203,15 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
   const scrollRef = useRef(null);
 
   useEffect(() => { saveJSON(CWD_KEY, cwd); }, [cwd]);
+  useEffect(() => {
+    setRecentFolders((previous) => uniqueRecentFolders([cwd, ...previous]));
+  }, [cwd]);
+  useEffect(() => { saveJSON(RECENT_FOLDERS_KEY, recentFolders); }, [recentFolders]);
+  useEffect(() => { saveJSON(EXPLORER_KEY, explorerOpen); }, [explorerOpen]);
+  useEffect(() => {
+    saveJSON(NOTES_KEY, notesOpen);
+    if (notesOpen && visible) notesRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [notesOpen, visible]);
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [lines]);
@@ -221,10 +268,26 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
       pageToken = data.nextPageToken || '';
     } while (pageToken);
     cacheRef.current.set(folderId, files);
+    setListing((previous) => previous.id === folderId ? { id: folderId, files, loading: false, error: '' } : previous);
     return files;
   }, [api]);
 
-  const invalidate = (...folderIds) => folderIds.forEach((id) => cacheRef.current.delete(id));
+  useEffect(() => {
+    if (!visible || (!explorerOpen && !notesOpen)) return;
+    let cancelled = false;
+    const id = cwd[cwd.length - 1].id;
+    setListing({ id, files: [], loading: true, error: '' });
+    listFolder(id).then(
+      (files) => { if (!cancelled) setListing({ id, files, loading: false, error: '' }); },
+      (error) => { if (!cancelled) setListing({ id, files: [], loading: false, error: error.message }); }
+    );
+    return () => { cancelled = true; };
+  }, [cwd, visible, explorerOpen, notesOpen, listFolder, folderVersion]);
+
+  const invalidate = (...folderIds) => {
+    folderIds.forEach((id) => cacheRef.current.delete(id));
+    if (folderIds.includes(cwd[cwd.length - 1].id)) setFolderVersion((version) => version + 1);
+  };
 
   // Exact name first, then case-insensitive. When a file and a folder share the name, `prefer` picks.
   const findChild = (entries, name, prefer) => {
@@ -322,10 +385,36 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     files.forEach((f, i) => print('entry', `${String(i + 1).padStart(2)}  `, { file: f }));
   };
 
+  // Both the shell and explorer commit a visit only after the destination loads.
+  const changeDirectory = async (next, historyIndex) => {
+    const entries = await listFolder(next[next.length - 1].id, { fresh: true });
+    setCwd(next);
+    setNavigation((previous) => {
+      if (historyIndex !== undefined) return { ...previous, index: historyIndex };
+      const current = previous.entries[previous.index];
+      if (current[current.length - 1].id === next[next.length - 1].id) return previous;
+      const visits = [...previous.entries.slice(0, previous.index + 1), next].slice(-100);
+      return { entries: visits, index: visits.length - 1 };
+    });
+    printListing(entries, false);
+  };
+
   const commands = {
     help: async () => HELP.forEach((l) => print('out', l)),
     clear: async () => setLines([]),
     pwd: async () => print('out', '/' + cwd.map((c) => c.name).join('/')),
+    gdwatch: async (args) => {
+      if (args.length > 1 || (args[0] && !['start', 'stop', 'status'].includes(args[0]))) {
+        throw new Error('usage: gdwatch [stop|status]');
+      }
+      if (args[0] === 'status') {
+        print('out', `Folder notes: ${notesOpen ? 'open' : 'closed'} — ${pathString(cwd)}`);
+        return;
+      }
+      const open = args[0] !== 'stop';
+      setNotesOpen(open);
+      print('out', open ? `Reading notes in ${pathString(cwd)} below the shell. The feed follows cd.` : 'Folder notes closed.');
+    },
 
     ls: async (args) => {
       const long = args.includes('-l');
@@ -354,9 +443,8 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
         const above = stack || (await ancestorsOf(entry));
         next = [...above, { id: entry.id, name: entry.name }];
       }
-      setCwd(next);
       // Auto-ls after every cd (like a zsh chpwd hook).
-      printListing(await listFolder(next[next.length - 1].id, { fresh: true }), false);
+      await changeDirectory(next);
     },
 
     open: async (args) => {
@@ -741,13 +829,37 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     return out;
   };
 
-  const run = async (line) => {
-    const trimmed = line.trim();
-    print('cmd', trimmed, { prompt: pathString(cwd) });
-    if (!trimmed) return;
-    historyRef.current = [...historyRef.current.filter((h) => h !== trimmed), trimmed].slice(-200);
+  const recordCommand = (line) => {
+    print('cmd', line, { prompt: pathString(cwd) });
+    if (!line) return;
+    historyRef.current = [...historyRef.current.filter((h) => h !== line), line].slice(-200);
     saveJSON(HISTORY_KEY, historyRef.current);
     historyIdxRef.current = -1;
+  };
+
+  const execute = async (action) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      await action();
+    } catch (e) {
+      print('err', e.message);
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+      // Keep keyboard focus on explorer controls when they initiated navigation.
+      if (document.activeElement === inputRef.current || document.activeElement === document.body) {
+        inputRef.current?.focus({ preventScroll: true });
+      }
+    }
+  };
+
+  const run = async (line) => {
+    if (busyRef.current) return;
+    const trimmed = line.trim();
+    recordCommand(trimmed);
+    if (!trimmed) return;
 
     const stages = splitPipes(trimmed).map((s) => expand(tokenize(s).tokens));
     if (stages.some((s) => s.length === 0)) { print('err', 'syntax error near "|"'); return; }
@@ -756,8 +868,7 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     if (!fn) { print('err', `${cmd}: command not found (try "help")`); return; }
     const badFilter = pipeline.find(([f]) => !filters[f]);
     if (badFilter) { print('err', `${badFilter[0]}: can't be used after | (use pbcopy, grep, head, tail, wc)`); return; }
-    setBusy(true);
-    try {
+    await execute(async () => {
       if (pipeline.length === 0) {
         await fn(args);
       } else {
@@ -767,12 +878,14 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
         for (const [f, ...fargs] of pipeline) items = await filters[f](items, fargs);
         items.forEach((it) => (it.file ? print('entry', it.text, { file: it.file }) : print('out', it.text)));
       }
-    } catch (e) {
-      print('err', e.message);
-    } finally {
-      setBusy(false);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
+    });
+  };
+
+  const navigateTo = async (next, historyIndex) => {
+    if (busyRef.current) return;
+    recordCommand(`cd ${quoteArg(pathString(next))}`);
+    // Use folder IDs directly: duplicate names and names containing slashes are valid in Drive.
+    await execute(() => changeDirectory(next, historyIndex));
   };
 
   const complete = async (reverse = false) => {
@@ -889,12 +1002,23 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
     run(`${f.mimeType === FOLDER_MIME ? 'cd' : 'open'} ${quoteArg(target || f.name)}`);
   };
 
+  const openEntryInWindow = (event, file) => {
+    if (file.mimeType === FOLDER_MIME) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const url = driveUrl(file);
+    // Open synchronously from the gesture, using the same editor/viewer URLs as gdopen.
+    window.open(url, '_blank', 'noopener,noreferrer,popup,width=1200,height=800');
+    print('link', `→ ${file.name}  `, { url });
+  };
+
   const renderName = (f) => (
     <>
       <span
         className={`term-entry ${f.mimeType === FOLDER_MIME ? 'term-folder' : 'term-file'}`}
         onClick={() => clickEntry(f)}
-        title={f.mimeType === FOLDER_MIME ? 'cd' : 'open'}
+        onContextMenu={(event) => openEntryInWindow(event, f)}
+        title={f.mimeType === FOLDER_MIME ? 'cd' : 'open; right-click to gdopen in a new window'}
       >
         {iconFor(f.mimeType)} {f.name}{f.mimeType === FOLDER_MIME ? '/' : ''}
       </span>
@@ -903,10 +1027,18 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
   );
 
   return (
-    <div className="term" onClick={(e) => { if (!window.getSelection()?.toString() && e.target === e.currentTarget) inputRef.current?.focus(); }}>
+    <div className={`term${notesOpen ? ' has-notes' : ''}`} onClick={(e) => { if (!window.getSelection()?.toString() && e.target === e.currentTarget) inputRef.current?.focus(); }}>
       <div className="term-header">
-        <span>drive shell — {pathString(cwd)}</span>
+        <span>drive shell</span>
         <div className="term-header-actions">
+          <button type="button" className="term-notes-toggle" aria-expanded={notesOpen} aria-controls="drive-folder-notes" onClick={() => setNotesOpen(open => !open)}>{notesOpen ? 'Hide folder notes' : 'Read folder notes'}</button>
+          <button
+            type="button"
+            className="term-explorer-toggle"
+            aria-expanded={explorerOpen}
+            aria-controls="drive-explorer"
+            onClick={() => setExplorerOpen((open) => !open)}
+          >{explorerOpen ? 'Hide explorer' : 'Show explorer'}</button>
           <button
             className="copy-btn"
             onClick={async () => {
@@ -927,48 +1059,104 @@ const DriveTerminal = ({ ensureFreshToken, openFile, onClose, visible = true, mo
           {onClose && <button className="term-close" onClick={onClose} title="Close">×</button>}
         </div>
       </div>
-      <div className="term-body" ref={scrollRef} onClick={() => { if (!window.getSelection()?.toString()) inputRef.current?.focus(); }}>
-        {lines.map((l, i) => {
-          if (l.type === 'cmd') {
-            return (
-              <div key={i} className="term-line">
-                <span className="term-prompt">{l.prompt} $</span> {l.text}
-              </div>
-            );
-          }
-          if (l.type === 'grid') {
-            return (
-              <div key={i} className="term-grid">
-                {l.files.map((f) => <span key={f.id}>{renderName(f)}</span>)}
-              </div>
-            );
-          }
-          if (l.type === 'link') {
-            return (
-              <div key={i} className="term-line">
-                {l.text}<a className="term-link" href={l.url} target="_blank" rel="noopener noreferrer">{l.url}</a>
-              </div>
-            );
-          }
-          if (l.type === 'entry') {
-            return <div key={i} className="term-line">{l.text}{renderName(l.file)}</div>;
-          }
-          return <div key={i} className={`term-line ${l.type === 'err' ? 'term-err' : ''} ${l.dim ? 'term-dim' : ''}`}>{l.text}</div>;
-        })}
-        <div className="term-input-row">
-          <span className="term-prompt">{pathString(cwd)} $</span>
-          <input
-            ref={inputRef}
-            className="term-input"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            spellCheck={false}
-            autoComplete="off"
-            autoCapitalize="off"
-            placeholder={busy ? 'working…' : ''}
-          />
+      <div className="term-navigation">
+        <div className="term-navigation-controls" role="group" aria-label="Folder navigation">
+          <button type="button" className="term-nav-button" aria-label="Back" title="Previous folder" disabled={busy || navigation.index === 0} onClick={() => navigateTo(navigation.entries[navigation.index - 1], navigation.index - 1)}>←</button>
+          <button type="button" className="term-nav-button" aria-label="Forward" title="Next folder" disabled={busy || navigation.index === navigation.entries.length - 1} onClick={() => navigateTo(navigation.entries[navigation.index + 1], navigation.index + 1)}>→</button>
+          <button type="button" className="term-nav-button" aria-label="Up one folder" title="Parent folder (cd ..)" disabled={busy || cwd.length === 1} onClick={() => navigateTo(cwd.slice(0, -1))}>↑</button>
         </div>
+        <nav className="term-breadcrumbs" aria-label="Current folder path">
+          {cwd.map((folder, index) => (
+            <React.Fragment key={folder.id}>
+              {index > 0 && <span className="term-breadcrumb-separator" aria-hidden="true">/</span>}
+              <button
+                type="button"
+                className="term-breadcrumb"
+                title={'/' + cwd.slice(0, index + 1).map((part) => part.name).join('/')}
+                aria-current={index === cwd.length - 1 ? 'page' : undefined}
+                disabled={busy}
+                onClick={() => navigateTo(cwd.slice(0, index + 1))}
+              >{folder.name}</button>
+            </React.Fragment>
+          ))}
+        </nav>
+      </div>
+      <div className={`term-workspace${explorerOpen ? ' has-explorer' : ''}`}>
+        {explorerOpen && (
+          <DriveExplorer
+            key={cwd[cwd.length - 1].id}
+            cwd={cwd}
+            recentFolders={recentFolders.filter((stack) => stack[stack.length - 1].id !== cwd[cwd.length - 1].id).slice(0, 5)}
+            listing={listing}
+            busy={busy}
+            onNavigate={navigateTo}
+            onOpenInWindow={openEntryInWindow}
+            onOpen={(file) => {
+              if (busyRef.current) return;
+              print('out', `Opening ${file.name}...`);
+              openFile(file.id, file.name, file.mimeType);
+            }}
+            onRefresh={() => invalidate(cwd[cwd.length - 1].id)}
+          />
+        )}
+        <div className="term-body" ref={scrollRef} onClick={() => { if (!window.getSelection()?.toString()) inputRef.current?.focus(); }}>
+          {lines.map((l, i) => {
+            if (l.type === 'cmd') {
+              return (
+                <div key={i} className="term-line">
+                  <span className="term-prompt">{l.prompt} $</span> {l.text}
+                </div>
+              );
+            }
+            if (l.type === 'grid') {
+              return (
+                <div key={i} className="term-grid">
+                  {l.files.map((f) => <span key={f.id}>{renderName(f)}</span>)}
+                </div>
+              );
+            }
+            if (l.type === 'link') {
+              return (
+                <div key={i} className="term-line">
+                  {l.text}<a className="term-link" href={l.url} target="_blank" rel="noopener noreferrer">{l.url}</a>
+                </div>
+              );
+            }
+            if (l.type === 'entry') {
+              return <div key={i} className="term-line">{l.text}{renderName(l.file)}</div>;
+            }
+            return <div key={i} className={`term-line ${l.type === 'err' ? 'term-err' : ''} ${l.dim ? 'term-dim' : ''}`}>{l.text}</div>;
+          })}
+          <div className="term-input-row">
+            <span className="term-prompt">{pathString(cwd)} $</span>
+            <input
+              ref={inputRef}
+              className="term-input"
+              aria-label="Drive shell command"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              placeholder={busy ? 'working…' : ''}
+            />
+          </div>
+        </div>
+      </div>
+      <div id="drive-folder-notes" ref={notesRef}>
+        {notesOpen && visible && <DriveNotesFeed
+          key={cwd[cwd.length - 1].id}
+          folder={cwd[cwd.length - 1]}
+          path={pathString(cwd)}
+          files={listing.id === cwd[cwd.length - 1].id ? listing.files : []}
+          loading={listing.id !== cwd[cwd.length - 1].id || listing.loading}
+          error={listing.id === cwd[cwd.length - 1].id ? listing.error : ''}
+          ensureFreshToken={ensureFreshToken}
+          readingPreferences={readingPreferences}
+          onRefresh={() => invalidate(cwd[cwd.length - 1].id)}
+          onNavigate={folder => navigateTo([...cwd, { id: folder.id, name: folder.name }])}
+        />}
       </div>
     </div>
   );

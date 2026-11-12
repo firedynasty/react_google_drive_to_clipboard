@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gdwatch · Your folder's notes</title>
+<style>
+  :root { color-scheme:dark; --bg:#101615; --panel:#18201e; --line:#303d38; --muted:#a0b1a8; --text:#ecf2ed; --accent:#b1e8bf; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html { scroll-padding-top:190px; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  button,input { font:inherit; }
+  button,a { -webkit-tap-highlight-color:transparent; }
+  button { cursor:pointer; border:1px solid var(--line); background:#25312b; color:var(--text); border-radius:8px; padding:8px 12px; }
+  button:hover { background:#34473b; }
+  button:disabled { cursor:default; opacity:.45; }
+  button:focus-visible,a:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .top { position:sticky; top:0; z-index:2; background:var(--bg); border-bottom:1px solid var(--line); }
+  header,.location,.filters,main { width:min(100% - 48px,1000px); margin:auto; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:21px 0 15px; }
+  .brand { font-size:23px; letter-spacing:-.7px; font-weight:700; }
+  .brand span { font-size:13px; font-weight:400; letter-spacing:0; color:var(--muted); margin-left:13px; }
+  .toolbar { display:flex; align-items:center; gap:15px; }
+  #status { color:var(--accent); font-size:12px; }
+  .location { display:flex; gap:12px; align-items:center; padding-bottom:15px; }
+  #location-label { font-size:10px; text-transform:uppercase; letter-spacing:1.2px; white-space:nowrap; color:var(--muted); }
+  #directory { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .filters { display:flex; align-items:center; gap:15px; padding-bottom:17px; }
+  #search { min-width:0; flex:1; padding:10px 12px; border:1px solid var(--line); background:var(--panel); color:var(--text); border-radius:8px; }
+  .filters label { color:var(--muted); white-space:nowrap; font-size:12px; }
+  main { padding:27px 0 45px; }
+  .intro { display:flex; gap:20px; justify-content:space-between; align-items:baseline; margin-bottom:19px; }
+  h1 { margin:0; font-size:23px; font-weight:550; letter-spacing:-.4px; }
+  #count { font-size:12px; color:var(--muted); text-align:right; }
+  #feed { display:flex; flex-direction:column; gap:22px; }
+  .note { border:1px solid var(--line); background:var(--panel); border-radius:13px; overflow:hidden; scroll-margin-top:20px; }
+  .note-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:13px; padding:19px 23px; border-bottom:1px solid var(--line); }
+  .note-title { margin:0 0 5px; font-size:16px; font-weight:600; overflow-wrap:anywhere; }
+  .note-kind { color:var(--muted); font-size:11px; }
+  .actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+  .actions button,.actions a { font-size:12px; }
+  .actions a { padding:8px 3px; }
+  .copy { color:#143221; border-color:var(--accent); background:var(--accent); font-weight:600; }
+  .copy:hover { background:#ccf5d5; }
+  .note-body { margin:0; padding:24px; font:17px/1.85 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:4; }
+  .note-message { min-height:100px; padding:28px 24px; margin:0; color:var(--muted); line-height:1.7; overflow-wrap:anywhere; }
+  .note-message.error { color:#f5bb9a; }
+  .note-foot { display:flex; gap:10px; justify-content:space-between; padding:13px 23px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
+  .empty { color:var(--muted); padding:40px 15px; line-height:1.8; text-align:center; border:1px dashed var(--line); border-radius:12px; }
+  #other { margin-top:25px; color:var(--muted); border-top:1px solid var(--line); padding:20px 0; }
+  summary { cursor:pointer; }
+  .other-entry { display:flex; align-items:center; justify-content:space-between; gap:15px; padding:12px 0; border-bottom:1px solid var(--line); }
+  .other-name { overflow-wrap:anywhere; }
+  .other-entry button { flex:none; font-size:12px; }
+  footer { margin-top:25px; color:var(--muted); font-size:12px; line-height:1.8; }
+  #toast { position:fixed; z-index:5; bottom:25px; left:50%; transform:translateX(-50%); max-width:90vw; border-radius:9px; padding:13px 19px; background:#dff3e4; color:#173322; box-shadow:0 7px 25px #0006; }
+  @media(max-width:650px) {
+    header,.location,.filters,main { width:calc(100% - 28px); }
+    header { padding-top:16px; } .brand span { display:none; }
+    .toolbar { gap:9px; } #status { font-size:11px; }
+    .location { gap:8px; } .filters { gap:9px; }
+    .intro { align-items:center; gap:12px; } h1 { font-size:21px; }
+    .note-head { padding:17px; } .note-body { padding:18px; font-size:16px; }
+    .note-foot { padding:12px 17px; } .note-foot span:last-child { display:none; }
+    main { padding-top:21px; } #feed { gap:17px; }
+  }
+</style>
+</head>
+<body>
+<div class="top">
+  <header>
+    <div class="brand">gdwatch<span>Your folder, one page of notes</span></div>
+    <div class="toolbar"><span id="status" role="status">Connecting</span><button id="stop">Stop watcher</button></div>
+  </header>
+  <div class="location"><span id="location-label">Following folder</span><span id="directory">Waiting for terminal…</span></div>
+  <div class="filters">
+    <input id="search" type="search" aria-label="Filter notes by filename" placeholder="Filter notes by filename…" autocomplete="off">
+    <label><input id="hidden" type="checkbox"> Hidden files</label>
+  </div>
+</div>
+<main>
+  <div class="intro"><h1>Notes in this folder</h1><span id="count">Waiting for notes</span></div>
+  <div id="feed" aria-label="Notes in current folder"></div>
+  <p id="empty" class="empty">Your notes will appear together here.</p>
+  <details id="other" hidden><summary id="other-summary">Other files and folders</summary><div id="other-files"></div></details>
+  <footer>Read only · Notes load as you scroll. Use Refresh on a Google Doc to fetch later edits.<br>Change folders in your terminal to follow another set of notes.</footer>
+</main>
+<div id="toast" role="status" hidden></div>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const fragment = location.hash.slice(1);
+if (fragment) { sessionStorage.setItem('gdwatch-token', fragment); history.replaceState(null, '', location.pathname); }
+const token = fragment || sessionStorage.getItem('gdwatch-token') || '';
+const textExtensions = new Set(['txt','md','markdown','text','org','rst','log','tex','csv','tsv','json','yaml','yml','toml','ini','cfg','conf','py','js','jsx','ts','tsx','html','css','sh','bash','zsh','sql','xml','gdoc']);
+const notes = new Map(), active = new Set();
+let state = null, queue = [], stopped = false, epoch = 0, toastTimer;
+
+async function api(path, body, signal) {
+  const response = await fetch(path, {
+    method:body === undefined ? 'GET' : 'POST',
+    headers:{'X-Gdwatch-Token':token,'Content-Type':'application/json'},
+    body:body === undefined ? undefined : JSON.stringify(body), cache:'no-store', signal
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not complete this request.');
+  return data;
+}
+function toast(message) {
+  $('toast').textContent = message; $('toast').hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 3000);
+}
+async function copy(value, label) {
+  try { await navigator.clipboard.writeText(value); toast(label + ' copied'); }
+  catch { toast('Select the note text and press ⌘C to copy.'); }
+}
+async function openOnMac(name, directory) {
+  if (stopped) return;
+  try { await api('/api/open', {name,directory}); toast('Opened on your Mac'); }
+  catch (error) { toast(error.message); }
+}
+function isNote(file) {
+  return file.kind === 'file' && (!file.name.includes('.') || textExtensions.has(file.name.split('.').pop().toLowerCase()));
+}
+function matches(file) {
+  return ($('hidden').checked || !file.name.startsWith('.')) && file.name.toLocaleLowerCase().includes($('search').value.trim().toLocaleLowerCase());
+}
+function button(label, handler, className = '') {
+  const node = document.createElement('button'); node.type = 'button'; node.textContent = label;
+  node.className = className; node.addEventListener('click', handler); return node;
+}
+function remove(entry) {
+  observer.unobserve(entry.node); entry.request?.controller.abort(); entry.node.remove(); notes.delete(entry.file.name);
+}
+function clear() {
+  epoch++; queue = [];
+  for (const entry of notes.values()) { observer.unobserve(entry.node); entry.request?.controller.abort(); }
+  notes.clear(); $('feed').replaceChildren(); $('other-files').replaceChildren(); $('other').hidden = true;
+}
+function makeNote(file) {
+  const entry = {file, directory:state.directory, status:'idle', near:false, text:null, request:null};
+  const node = document.createElement('article'); node.className = 'note'; node.dataset.name = file.name;
+  entry.node = node;
+  const head = document.createElement('div'); head.className = 'note-head';
+  const titleBox = document.createElement('div'), title = document.createElement('h2'), kind = document.createElement('span');
+  title.className = 'note-title'; title.textContent = file.name;
+  entry.google = file.name.toLowerCase().endsWith('.gdoc');
+  kind.className = 'note-kind'; kind.textContent = entry.google ? 'Google Doc' : 'Text note';
+  titleBox.append(title,kind);
+  const actions = document.createElement('div'); actions.className = 'actions';
+  entry.copy = button('Copy text', () => copy(entry.text, 'Text'), 'copy'); entry.copy.disabled = true;
+  entry.refresh = button('Refresh', () => enqueue(entry, true));
+  entry.refresh.setAttribute('aria-label', 'Refresh ' + file.name);
+  const copyName = button('Copy name', () => copy(file.name, 'Name'));
+  entry.link = document.createElement('a'); entry.link.textContent = 'Open in Google Docs ↗';
+  entry.link.target = '_blank'; entry.link.rel = 'noopener noreferrer'; entry.link.hidden = true;
+  const open = button('Open on Mac ↗', () => openOnMac(file.name, entry.directory));
+  actions.append(entry.copy,entry.refresh,copyName,entry.link,open); head.append(titleBox,actions);
+  entry.body = document.createElement('pre'); entry.body.className = 'note-body'; entry.body.hidden = true;
+  entry.message = document.createElement('p'); entry.message.className = 'note-message'; entry.message.textContent = 'Waiting to load…';
+  const foot = document.createElement('div'); foot.className = 'note-foot';
+  entry.details = document.createElement('span'); entry.details.textContent = 'Loads as you scroll';
+  const readOnly = document.createElement('span'); readOnly.textContent = 'Read only'; foot.append(entry.details,readOnly);
+  node.append(head,entry.body,entry.message,foot); return entry;
+}
+const observer = new IntersectionObserver(changes => {
+  for (const change of changes) {
+    const entry = notes.get(change.target.dataset.name);
+    if (!entry || entry.node !== change.target) continue;
+    entry.near = change.isIntersecting;
+    if (entry.near && entry.status === 'idle') enqueue(entry);
+  }
+}, {rootMargin:'500px 0px'});
+function enqueue(entry, force = false) {
+  if (stopped || !state || notes.get(entry.file.name) !== entry || ['loading','queued'].includes(entry.status)) return;
+  entry.status = 'queued'; entry.refresh.disabled = true; entry.details.textContent = 'Waiting to load…';
+  queue.push({entry,force,epoch}); drain();
+}
+function drain() {
+  if (stopped) return;
+  while (active.size < 2) {
+    // At most one Google export at a time; local notes can load alongside it.
+    const index = queue.findIndex(job => !job.entry.google || ![...active].some(request => request.google));
+    if (index < 0) return;
+    const job = queue.splice(index,1)[0], entry = job.entry;
+    if (job.epoch !== epoch || notes.get(entry.file.name) !== entry) continue;
+    if (entry.node.hidden || (!entry.near && !job.force)) {
+      entry.status = 'idle'; entry.refresh.disabled = false; continue;
+    }
+    load(entry, job.force);
+  }
+}
+async function load(entry, force) {
+  const request = {controller:new AbortController(),epoch,google:entry.google};
+  active.add(request); entry.request = request; entry.status = 'loading';
+  entry.node.setAttribute('aria-busy','true'); entry.refresh.disabled = true;
+  entry.details.textContent = entry.google ? 'Fetching Google Doc…' : 'Loading note…';
+  entry.message.className = 'note-message';
+  if (entry.text === null) entry.message.textContent = entry.google ? 'Fetching document… Google login refresh can take a minute.' : 'Loading note…';
+  const current = () => !stopped && epoch === request.epoch && notes.get(entry.file.name) === entry && entry.request === request;
+  try {
+    const data = await api('/api/file?' + new URLSearchParams({name:entry.file.name,directory:entry.directory,refresh:force ? '1' : '0'}), undefined, request.controller.signal);
+    if (!current()) return;
+    entry.text = data.text;
+    entry.body.hidden = typeof data.text !== 'string'; entry.message.hidden = !entry.body.hidden;
+    entry.copy.disabled = typeof data.text !== 'string';
+    if (typeof data.text === 'string') {
+      entry.body.textContent = data.text || '(Empty note)';
+      entry.details.textContent = data.text.length.toLocaleString() + ' characters' + (data.fetchedAt ? ' · ' + (data.cached ? 'Cached · ' : 'Fetched · ') + new Date(data.fetchedAt * 1000).toLocaleTimeString() : ' · Saved text');
+    } else {
+      entry.message.textContent = data.message || 'A text preview is not available. Choose Open on Mac.';
+      entry.details.textContent = 'Open the original to view this file';
+    }
+    if (data.url) { entry.link.href = data.url; entry.link.hidden = false; }
+    entry.status = 'ready';
+  } catch (error) {
+    if (!current() || error.name === 'AbortError') return;
+    entry.status = 'error'; entry.message.hidden = false; entry.message.className = 'note-message error';
+    entry.message.textContent = error.message; entry.details.textContent = 'Use Refresh to try again';
+  } finally {
+    active.delete(request);
+    if (current()) { entry.refresh.disabled = false; entry.node.removeAttribute('aria-busy'); }
+    drain();
+  }
+}
+function filter() {
+  if (!state) return;
+  let count = 0;
+  for (const entry of notes.values()) {
+    const hidden = !matches(entry.file);
+    if (entry.node.hidden !== hidden) {
+      entry.node.hidden = hidden; observer.unobserve(entry.node);
+      if (!hidden) observer.observe(entry.node);
+    }
+    if (!hidden) count++;
+  }
+  $('count').textContent = count + (count === 1 ? ' note' : ' notes') + ' · Scroll to read';
+  $('empty').hidden = count > 0;
+  $('empty').textContent = notes.size ? 'No notes match this filter.' : 'No Google Docs or text notes in this folder.';
+  const other = state.files.filter(file => !isNote(file) && matches(file));
+  $('other').hidden = !other.length; $('other-summary').textContent = 'Other files and folders (' + other.length + ')';
+  const fragment = document.createDocumentFragment();
+  for (const file of other) {
+    const row = document.createElement('div'); row.className = 'other-entry';
+    const name = document.createElement('span'); name.className = 'other-name'; name.textContent = file.name + (file.kind === 'folder' ? '/' : ''); row.append(name);
+    if (file.kind === 'file') { const directory = state.directory; row.append(button('Open on Mac ↗', () => openOnMac(file.name,directory))); }
+    fragment.append(row);
+  }
+  $('other-files').replaceChildren(fragment); drain();
+}
+function sync(next) {
+  const changedDirectory = !state || state.directory !== next.directory;
+  const changedFiles = changedDirectory || state.revision !== next.revision;
+  if (changedDirectory) { clear(); $('search').value = ''; window.scrollTo(0,0); }
+  state = next;
+  $('directory').textContent = next.directory; $('directory').title = next.directory;
+  $('location-label').textContent = next.following ? 'Following folder' : 'Watching folder';
+  $('status').textContent = next.following ? 'Following terminal' : 'Watching folder';
+  if (!changedFiles) return;
+  const files = next.files.filter(isNote), names = new Set(files.map(file => file.name));
+  for (const [name,entry] of notes) if (!names.has(name)) remove(entry);
+  files.forEach((file,index) => {
+    let entry = notes.get(file.name);
+    if (entry && entry.file.version !== file.version) { remove(entry); entry = null; }
+    if (!entry) { entry = makeNote(file); notes.set(file.name,entry); observer.observe(entry.node); }
+    const before = $('feed').children[index];
+    if (before !== entry.node) $('feed').insertBefore(entry.node,before || null);
+  });
+  filter();
+}
+async function poll() {
+  if (stopped) return;
+  try { const next = await api('/api/state'); if (!stopped) sync(next); }
+  catch (error) {
+    if (stopped) return;
+    if (state) clear(); state = null;
+    $('status').textContent = 'Disconnected'; $('directory').textContent = error.message;
+    $('count').textContent = 'Waiting for folder'; $('empty').hidden = false; $('empty').textContent = error.message;
+  } finally { if (!stopped) setTimeout(poll,1000); }
+}
+$('search').addEventListener('input',filter);
+$('hidden').addEventListener('change',filter);
+$('stop').addEventListener('click',async () => {
+  try {
+    await api('/api/stop',{}); stopped = true; clear(); state = null;
+    $('status').textContent = 'Stopped'; $('stop').disabled = true; $('count').textContent = 'Watcher stopped';
+    $('directory').textContent = 'Run gdwatch in your terminal to start again.';
+    $('empty').hidden = false; $('empty').textContent = 'Watcher stopped. Your terminal keeps running.';
+  } catch (error) { toast(error.message); }
+});
+poll();
+</script>
+</body>
+</html>
